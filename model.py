@@ -3,7 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from utils import DoubleConv, DownSample, UpSample
 from deformer import SMPLDeformer, skinning
-from smpl_server import SMPLServer
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
+import os
 
 class UNetEncoder(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -39,25 +42,44 @@ class UNetEncoder(nn.Module):
         return out
 
 class OccupancyField(nn.Module):
-    def __init__(self, resolution=256, in_features=128, num_classes=1):
+    def __init__(self, resolution=256, in_features=131, num_classes=1):
         super(OccupancyField, self).__init__()
         self.resolution = resolution
         self.in_features = in_features
         self.num_classes = num_classes
 
         self.fc = nn.Sequential(
-            nn.Linear(in_features, 128),
+            nn.Linear(in_features, 131),
             nn.ReLU(inplace=True),
-            nn.Linear(128, 128),
+            nn.Linear(131, 131),
             nn.ReLU(inplace=True),
-            nn.Linear(128, 128),
+            nn.Linear(131, 64),
             nn.ReLU(inplace=True),
             nn.Linear(64, num_classes)
         )
 
     def forward(self, x):
-        # Reshape the input tensor to (batch_size, in_features * resolution)
-        x = x.view(-1, self.in_features * self.resolution)
+        x = self.fc(x)
+        return x
+    
+class RGBfield(nn.Module):
+    def __init__(self, resolution=256, in_features=131, num_classes=3):
+        super(RGBfield, self).__init__()
+        self.resolution = resolution
+        self.in_features = in_features
+        self.num_classes = num_classes
+
+        self.fc = nn.Sequential(
+            nn.Linear(in_features, 131),
+            nn.ReLU(inplace=True),
+            nn.Linear(131, 131),
+            nn.ReLU(inplace=True),
+            nn.Linear(131, 64),
+            nn.ReLU(inplace=True),
+            nn.Linear(64, num_classes)
+        )
+
+    def forward(self, x):
         x = self.fc(x)
         return x
     
@@ -66,59 +88,70 @@ class OccupancyField(nn.Module):
 class UnaGenModel(nn.Module):
     def __init__(self, in_channels=3, features=128, mmap_dim=1024, mmap_res=256, num_classes=1):
         super(UnaGenModel, self).__init__()
-        self.feature_encoder = UNetEncoder(in_channels=in_channels, out_channels=features)
+        self.GeometryEncoder = UNetEncoder(in_channels=in_channels, out_channels=features).cuda()
+        self.RenderingEncoder = UNetEncoder(in_channels=in_channels, out_channels=features).cuda()
+
         self.mmap_dim = mmap_dim
         self.mmap_res = mmap_res
         self.num_classes = num_classes
-        self.classifier = OccupancyField(resolution=mmap_res, in_features=features, num_classes=num_classes)
 
-        self.smpl_server = None
-        self.deformer = None
+        self.OccupancyField = OccupancyField(resolution=mmap_res, in_features=features+3, num_classes=num_classes).cuda()
+        self.RGBField = RGBfield(resolution=mmap_res, in_features=features+3, num_classes=3).cuda()
+
+        self.debug = True
 
     def forward(self, inputs, matrix_mapping):
         # input is a dictionary containing the image, the smpl parameters, and other info 
         # it is of shape (batch_size, key_values) where key values is of different dimensions
         
-        print("model forward")
-        image = inputs['masked_image'].cuda()
-        print("image shape:", image.shape)
+        image = inputs['masked_image']
 
         gender = inputs['metadata']['gender']
-        print("gender", gender)
         betas = inputs['betas']
-        print("betas shape:", betas.shape)
-        scale = inputs['smpl_params'][:, 0].cuda()
-        smpl_pose = inputs["pose"].cuda()
-        intrinsics = inputs['intrinsics'].cuda()
+        # scale = inputs['smpl_params'][:, 0].cuda()
+        # smpl_pose = inputs["pose"].cuda()
+        # intrinsics = inputs['intrinsics'].cuda()
         smpl_tfs = inputs['smpl_tfs'].cuda()
-        print("smpl_tfs shape:", smpl_tfs.shape)
 
-        # The active voxels are mapped by the matrix_mapping (while in the canonical space)
-        # TODO: Implement the mapping of the active voxels by the matrix_mapping 
-        active_voxels_coo = self.voxel_mapping(matrix_mapping)   # Returns the active voxels coordinates in the canonical space
-        print("active_voxels_coo shape:", active_voxels_coo.shape)
+        with torch.no_grad():
+            # The active voxels are mapped by the matrix_mapping (while in the canonical space)
+            # TODO: Implement the mapping of the active voxels by the matrix_mapping 
+            active_voxels_coo = self.voxel_mapping(matrix_mapping)   # Returns the active voxels coordinates in the canonical space
+            self.visualize_voxels(active_voxels_coo, output_file='active_voxels.png')
 
-        # The active voxels are transformed to the dynamical space from the canonical space using the smpl pose parameters
-        # TODO: Implement the transformation of the active voxels to the dynamical space using the smpl pose parameters
-        # dynamical_voxels_coo = transform_voxels(active_voxels_coo, smpl_tfs)   # Returns the active voxels coordinates in the dynamical space
+            # The active voxels are transformed to the dynamical space from the canonical space using the smpl pose parameters
+            # TODO: Implement the transformation of the active voxels to the dynamical space using the smpl pose parameters
+            # dynamical_voxels_coo = transform_voxels(active_voxels_coo, smpl_tfs)   # Returns the active voxels coordinates in the dynamical space
 
-        dynamical_voxels_coo = self.dynamical_tfs_from_canonical(active_voxels_coo, smpl_tfs, betas, gender)   # To be tested if it works
-        print("dynamical_voxels_coo shape:", dynamical_voxels_coo.shape)
+            dynamical_voxels_coo = self.dynamical_tfs_from_canonical(active_voxels_coo, smpl_tfs, betas, gender)   # To be tested if it works
+            self.visualize_voxels(dynamical_voxels_coo[0], output_file='dynamical_voxels.png')
 
         # ---
         # The feature encoder produces a pixel/voxel-wise feature embedding used to compute the occupancy field of the active voxels
-        features = self.feature_encoder(image)   # (batch_size, features, img_width, img_height)
-        print("features shape:", features.shape)
+        features = self.GeometryEncoder(image)   # (batch_size, features, img_width, img_height)
 
         # The feature embedding is interpolated to the active voxels in the dynamical space
         # TODO: Implement the interpolation of the feature embedding to the active voxels in the dynamical space (coordinates to pixel/voxel aligned features)
         features_at_voxels = self.interpolate_features(features, dynamical_voxels_coo)
-        print("features_at_voxels shape:", features_at_voxels.shape)
 
         # The occupancy fields infers all the active voxels in the dynamical space  using the feature embedding
         # TODO: implement to run faster       
-        occupancy_field = self.classifier(features_at_voxels)
-        print("occupancy_field shape:", occupancy_field.shape)
+        occupancy_field = self.OccupancyField(features_at_voxels.view(-1, features_at_voxels.shape[-1]))
+        occupancy_field = occupancy_field.view(features_at_voxels.shape[0], features_at_voxels.shape[1], -1)
+
+        # --- this is currently not used, as the occupancy field is used to produce the mask during the rendering
+        # Apply a threshold to the occupancy field
+        # occupied_voxels_mask = occupancy_field > 0.5
+        # occupied_voxels = dynamical_voxels_coo[occupied_voxels_mask.squeeze(-1)]
+
+        # --- Rendering ---
+        features_r = self.RenderingEncoder(image)
+
+        features_r_at_voxels = self.interpolate_features(features_r, dynamical_voxels_coo)
+
+        rgb_field = self.RGBField(features_r_at_voxels.view(-1, features_r_at_voxels.shape[-1]))
+        rgb_field = rgb_field.view(features_r_at_voxels.shape[0], features_r_at_voxels.shape[1], -1)
+        # ---
 
         # The output of the occupancy field is used to compute the volume if needed
         # TODO: Implement the computation of the volume using the occupancy field as a separate method of the model, which can be called from outside
@@ -130,41 +163,106 @@ class UnaGenModel(nn.Module):
         # When the resolution is reduced enough, the matrix_mapping is to be refined to smaller voxels
         # TODO: implement the refinement of the matrix_mapping using the occupancy field as a separate method of the model, which can be called from outside
         # TODO: alternatively, make the matrix_mapping a property of the model, and check if refinement is due in the forward method
+        
+        # render image
+        rendered_image = self.render_image(dynamical_voxels_coo, occupancy_field, rgb_field, image)
 
-        return occupancy_field
+        outputs = {'dynamical_voxels_coo': dynamical_voxels_coo, 
+                   'occupancy_field': occupancy_field, 
+                   'rgb_field': rgb_field,
+                   'rendered_image': rendered_image}
 
-    def interpolate_features(self, features, matrix_mapping):
+        return outputs
+    
+    # Auxiliary methods ---------------------------------------------------------------------------------------------------
+    def visualize_voxels(self, voxels_coo, output_file=None):
+        '''This is used to save an image of the voxels in 3D space.
+        '''
+        voxels_coo_np = voxels_coo.detach().cpu().numpy()
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        ax.scatter(voxels_coo_np[:, 0], voxels_coo_np[:, 1], voxels_coo_np[:, 2])
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        
+        if output_file is None:
+            output_file = 'voxels_temp.png'
+        output_file = os.path.join('outputs/debug/', output_file)
+        plt.savefig(output_file)
+
+        return
+
+
+    def interpolate_features(self, features, voxels_coo):
+        '''At the moment we simply interpolate the features using the nearest neighbor interpolation.
+        Later on, we'll have to change it to a more sophisticated interpolation method.
+        N.B.: The coordinates are normalized in the min-max range, because the skinning transformation is deforming the [-1,1] range. (we need to check if this is correct)
+        '''
+        height, width = features.shape[2], features.shape[3]
+        y = voxels_coo[:, :, 0]
+        x = voxels_coo[:, :, 1]
+        y_min, y_max = torch.min(y), torch.max(y)
+        x_min, x_max = torch.min(x), torch.max(x)
+        fy = (y - y_min) / (y_max - y_min) * (height - 1)
+        fx = (x - x_min) / (x_max - x_min) * (width - 1)
+        fy = fy.long()
+        fx = fx.long()
+
+        interpolated_features = torch.zeros(features.size(0), voxels_coo.size(1), features.size(1) + voxels_coo.size(2)).to(features.device)
+
+        batch_indices = torch.arange(features.size(0)).unsqueeze(1).expand_as(fy).to(features.device)
+
+        interpolated_features[:, :, :features.shape[1]] = features[batch_indices, :, fy, fx]
+        interpolated_features[:, :, features.shape[1]:] = voxels_coo
         
         return interpolated_features
-
-    def flatten_features(self, interpolated_features, matrix_mapping):
-
-        return flattened_features_selected
     
     def voxel_mapping(self, matrix_mapping):
         active_voxels_coo = torch.nonzero(matrix_mapping == 1).float()
-        print("active_voxels_coo shape:", active_voxels_coo.shape)
 
         for i in range(active_voxels_coo.shape[-1]):
             dim_min = 0
             dim_max = matrix_mapping.shape[i] - 1
             active_voxels_coo[:, i] = 2 * (active_voxels_coo[:, i] - dim_min) / (dim_max - dim_min) - 1
-        
-        print("active_voxels_coo shape:", active_voxels_coo.shape)
-        print("active_voxels_coo:", active_voxels_coo)
 
         return active_voxels_coo
     
     def dynamical_tfs_from_canonical(self, points_coo, smpl_tfs, betas, gender):
-        # points_coo = torch.tensor(points_coo).cuda().float()   # Suppose points_coo is a tensor of shape (batch_size, num_points, 3)
-        weights = torch.zeros(len(gender))
+        verts_deformed = torch.zeros(len(gender), points_coo.shape[0], points_coo.shape[1]).cuda().float()
         for i, gen in enumerate(gender):   # Each frame in the batch needs to have the skinning weights loaded separately
-            print("gender i:", type(gen))
-            print("betas i:", betas[i].shape)
             deformer = SMPLDeformer(betas=betas[i], gender=gen)
-            print('check')
-            weights[i] = deformer.query_weights(points_coo)
-            print("weights i shape:", deformer.query_weights(points_coo).shape)
-        print("weights shape:", weights.shape)
-        verts_deformed = skinning(points_coo.unsqueeze(0), weights, smpl_tfs).data.cpu().numpy()[0]
+            weights = deformer.query_weights(points_coo)
+            verts_deformed[i] = skinning(points_coo.unsqueeze(0), weights, smpl_tfs[i]).data[0]
         return verts_deformed
+    
+    def render_image(self, dynamical_voxels_coo, occupancy_field, rgb_field, original_image):
+        '''Render image from occupancy field and rgb field.'''
+        height, width = original_image.shape[2:]
+
+        occupancy_map = (occupancy_field > -1).float() # TODO: change back to 0.5
+        occupied_voxels_coo = dynamical_voxels_coo * occupancy_map # Should change this, puts 0s in the empty voxels coordinates
+        occupied_voxels_rgb = rgb_field * occupancy_map
+
+        rendered_image = torch.zeros(original_image.shape, device=original_image.device)
+        
+        for image in range(original_image.shape[0]):
+            max_x = occupied_voxels_coo[:,:,0].max()
+            max_y = occupied_voxels_coo[:,:,1].max()
+            min_x = occupied_voxels_coo[:,:,0].min()
+            min_y = occupied_voxels_coo[:,:,1].min()
+            for voxel in range(occupied_voxels_coo.shape[1]):
+                x = occupied_voxels_coo[image, voxel, 0]
+                y = occupied_voxels_coo[image, voxel, 1]
+                ix = (x - min_x)/(max_x - min_x) * (width - 1)
+                iy = (y - min_y)/(max_y - min_y) * (height - 1)
+                ix = ix.long()
+                iy = iy.long()
+                rendered_image[image, :, iy, ix] =+ occupied_voxels_rgb[image, voxel, :]
+        
+        rendered_image = rendered_image*255
+
+        return rendered_image

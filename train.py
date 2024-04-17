@@ -4,6 +4,7 @@ import torch.optim as optim
 from torchvision import transforms
 from torch.utils.data import DataLoader
 from dataset import una_gen_dataset
+from loss import loss_c
 from model import UnaGenModel
 from utils import *  
 import yaml
@@ -19,9 +20,8 @@ def train():
     dataset = una_gen_dataset(data_dir="/UnA-Gen/data/data", split='train', transform=None)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = UnaGenModel(in_channels=3, features=128, mmap_dim=1024, mmap_res=256, num_classes=1)  
+    model = UnaGenModel(in_channels=3, features=128, mmap_dim=1024, mmap_res=256, num_classes=1) 
 
-    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # Move model to GPU if available
@@ -30,10 +30,7 @@ def train():
     print(f'Model moved to {device}')
 
     # Create a matrix mapping
-    matrix_mapping = initialize_matrix_mapping(128, 0.5, device=device)
-    print("matrix_mapping shape:", matrix_mapping.shape)
-    print("matrix_mapping:", matrix_mapping)
-    print("matrix_mapping number of ones:", torch.sum(matrix_mapping).item())
+    matrix_mapping = initialize_matrix_mapping(32, 0.5, device=device)
 
     for epoch in range(num_epochs):
         print(f'Training Epoch [{epoch+1}/{num_epochs}]')
@@ -41,17 +38,18 @@ def train():
         total_loss = 0
 
         for batch_idx, inputs in enumerate(dataloader):
-            #inputs = inputs.to(device)   # inputs are a dictionary, they are move to cuda later
+            #inputs = inputs.to(device)   # inputs are a dictionary, they are moved to cuda later
+
+            inputs['masked_image'] = inputs['masked_image'].to(device)
 
             outputs = model(inputs, matrix_mapping)
-            # outputs projection
 
-            loss = criterion(outputs, inputs)
+            loss = loss_c(outputs['rendered_image'], inputs['masked_image'])
             total_loss += loss.item()
 
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            optimizer.zero_grad()
 
             if batch_idx % 1 == 0:
                 print(f'Epoch [{epoch+1}/{num_epochs}], Batch [{batch_idx+1}/{len(dataloader)}], Loss: {loss.item():.4f}')
