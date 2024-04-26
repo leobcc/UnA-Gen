@@ -7,9 +7,10 @@ from PIL import Image
 import numpy as np
 import cv2
 from smpl_server import SMPLServer
+from torchvision.utils import save_image
 
 class una_gen_dataset(Dataset):
-    def __init__(self, data_dir, split='train', transform=None):
+    def __init__(self, data_dir, split='train', frame_skip=1, transform=None):
         self.data_dir = data_dir
         self.split = split
         self.transform = transform
@@ -17,6 +18,8 @@ class una_gen_dataset(Dataset):
 
         split_dir = os.path.join(data_dir, split)
         for video_folder in os.listdir(split_dir):
+            if video_folder == 'courtyard_backpack_00':   # This is a temporary fix, we should remove this line
+                continue
             video_path = os.path.join(split_dir, video_folder)
             frame_dir = os.path.join(video_path, "rgb_frames")
             mask_dir = os.path.join(video_path, "masks")
@@ -47,14 +50,15 @@ class una_gen_dataset(Dataset):
             if num_frames != num_masks or num_frames != num_smpl_params or num_frames != num_poses or num_frames != num_intrinsics or num_frames != num_smpl_tfs:
                 raise ValueError(f"Number of frames ({num_frames}) does not match number of masks ({num_masks}) or the other data ({num_smpl_params}, {num_poses}, {num_intrinsics}, {num_smpl_tfs}) for video {video_folder}")
 
-            for frame_file, mask_file, smpl_params_file, pose_file, intrinsics_file, smpl_tfs_file in zip(frame_files, mask_files, smpl_params_files, pose_files, intrinsics_files, smpl_tfs_files):
-                frame_path = os.path.join(frame_dir, frame_file)
-                mask_path = os.path.join(mask_dir, mask_file)
-                smpl_params_path = os.path.join(smpl_params_dir, smpl_params_file)
-                pose_path = os.path.join(pose_dir, pose_file)
-                intrinsics_path = os.path.join(intrinsics_dir, intrinsics_file)
-                smpl_tfs_path = os.path.join(smpl_tfs_dir, smpl_tfs_file)
-                self.data.append({'frame_path': frame_path, 'mask_path': mask_path, 'smpl_params_path': smpl_params_path, 'pose_path': pose_path, 'intrinsics_path': intrinsics_path, 'smpl_tfs_path': smpl_tfs_path, 'betas_path': betas_path, 'metadata': metadata})
+            for i, (frame_file, mask_file, smpl_params_file, pose_file, intrinsics_file, smpl_tfs_file) in enumerate(zip(frame_files, mask_files, smpl_params_files, pose_files, intrinsics_files, smpl_tfs_files)):
+                if i % frame_skip == 0:
+                    frame_path = os.path.join(frame_dir, frame_file)
+                    mask_path = os.path.join(mask_dir, mask_file)
+                    smpl_params_path = os.path.join(smpl_params_dir, smpl_params_file)
+                    pose_path = os.path.join(pose_dir, pose_file)
+                    intrinsics_path = os.path.join(intrinsics_dir, intrinsics_file)
+                    smpl_tfs_path = os.path.join(smpl_tfs_dir, smpl_tfs_file)
+                    self.data.append({'frame_path': frame_path, 'mask_path': mask_path, 'smpl_params_path': smpl_params_path, 'pose_path': pose_path, 'intrinsics_path': intrinsics_path, 'smpl_tfs_path': smpl_tfs_path, 'betas_path': betas_path, 'metadata': metadata})
 
                 ''' The smpl tfs are already preprocessed
                 betas = torch.tensor(np.load(betas_path)[None], dtype=torch.float32)
@@ -76,12 +80,14 @@ class una_gen_dataset(Dataset):
     def __getitem__(self, idx):
         frame_info = self.data[idx]
         frame = cv2.imread(frame_info['frame_path'])
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mask = cv2.imread(frame_info['mask_path'], cv2.IMREAD_GRAYSCALE)
         betas = torch.tensor(np.load(frame_info['betas_path'])[None], dtype=torch.float32) # Needed?
         metadata = frame_info['metadata']
         
         masked_image = cv2.bitwise_and(frame, frame, mask=mask)
-        #masked_image = cv2.resize(masked_image, (1080, 1080))   # When reshaping we have to also change the parameters etc. run in the preprocessing of the original image
+        # I think we should not resize
+        # masked_image = cv2.resize(masked_image, (1080, 1080))   # When reshaping we have to also change the parameters etc. run in the preprocessing of the original image
         masked_image = transforms.ToTensor()(masked_image)
 
         smpl_params = torch.load(frame_info['smpl_params_path']) # Needed?

@@ -50,10 +50,11 @@ def preprocess_data(video_folder):
         smpl_tfs = smpl_outputs['smpl_tfs']
         smpl_tfs = smpl_tfs.cpu()
         
+        torch.save(smpl_tfs, os.path.join(smpl_tfs_folder, filename))
 
     return
 
 if __name__ == "__main__":
-    video_folder = '/UnA-Gen/data/data/train/courtyard_backpack_00'
+    video_folder = '/UnA-Gen/data/data/train/courtyard_laceShoe_00'
     preprocess_data(video_folder)
     

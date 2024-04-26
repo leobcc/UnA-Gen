@@ -11,7 +11,7 @@ class SMPLDeformer():
         self.K = K
         self.smpl = SMPLServer(gender=gender)
         smpl_params_canoical = self.smpl.param_canonical.clone()
-        smpl_params_canoical[:, 76:] = torch.tensor(betas).float().to(self.smpl.param_canonical.device)
+        smpl_params_canoical[:, 76:] = betas.clone().detach().float().to(self.smpl.param_canonical.device)
         cano_scale, cano_transl, cano_thetas, cano_betas = torch.split(smpl_params_canoical, [1, 3, 72, 10], dim=1)
         smpl_output = self.smpl(cano_scale, cano_transl, cano_thetas, cano_betas)
         self.smpl_verts = smpl_output['smpl_verts']

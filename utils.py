@@ -11,14 +11,26 @@ def export_mesh(vertices):
     mesh = trimesh.Trimesh(vertices)
     mesh.export('mesh.obj')
 
-# Matrix mapping handling in sparse notation
+# Cooridnates transformations 
 
-def initialize_matrix_mapping(mmap_dim, mmap_res, device):
-    matrix_mapping = np.ones((mmap_dim, mmap_dim, mmap_dim))
-    matrix_mapping = torch.from_numpy(matrix_mapping).to(device)
-    #indices = torch.nonzero(tensor)
-
-    return matrix_mapping
+def quat_to_rot(q):
+    batch_size, _ = q.shape
+    q = F.normalize(q, dim=1)
+    R = torch.ones((batch_size, 3,3)).cuda()
+    qr=q[:,0]
+    qi = q[:, 1]
+    qj = q[:, 2]
+    qk = q[:, 3]
+    R[:, 0, 0]=1-2 * (qj**2 + qk**2)
+    R[:, 0, 1] = 2 * (qj *qi -qk*qr)
+    R[:, 0, 2] = 2 * (qi * qk + qr * qj)
+    R[:, 1, 0] = 2 * (qj * qi + qk * qr)
+    R[:, 1, 1] = 1-2 * (qi**2 + qk**2)
+    R[:, 1, 2] = 2*(qj*qk - qi*qr)
+    R[:, 2, 0] = 2 * (qk * qi-qj * qr)
+    R[:, 2, 1] = 2 * (qj*qk + qi*qr)
+    R[:, 2, 2] = 1-2 * (qi**2 + qj**2)
+    return R
 
 # Unet parts
 
