@@ -4,3 +4,4 @@ open3d
 gdown
 chumpy
 git+https://github.com/facebookresearch/pytorch3d.git
+trimesh

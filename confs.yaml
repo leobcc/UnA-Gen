@@ -1,9 +1,9 @@
 continue_training: False
 
-learning_rate: 0.001
+learning_rate: 0.01
 num_epochs: 1000
-batch_size: 8
-frame_skip: 400
+batch_size: 4
+frame_skip: 100
 shuffle: False
 num_workers: 0
 
@@ -12,7 +12,7 @@ model:
   visualize_stats: True
 
   encoder: 
-    name: "dpt"   # "Unet", "dpt"
+    name: "dpt"   # "unet", "dpt"
     size: "vitl"   # "vits", "vitb" or "vitl"
     train: False
     decouple: False
@@ -22,29 +22,30 @@ model:
     train: True
     view_dependent_rgb: True   # At the moment works only with cnn
 
-  smpl_transform: "norm"   # "norm" or "world". Perform smpl transformation in normed space or world coordinates.
+  smpl_transform: "world"   # "norm" or "world". Perform smpl transformation in normed space or world coordinates.
   learn_world_params: False
-  distribute_with_perspective: False   # I think this makes sense only if smpl_transform==world
+  distribute_with_perspective: True   # I think this makes sense only if smpl_transform==world
   standard_depth_n: 0   # This will have to be learnt
   standard_scale_z: 2   # This will have to be learnt
   standard_depth_f: 8   # Currently not used
   mapping_dim: 16
+  occupancy_threshold: 0.5
   relative_ov: False
   render_with_ov: True   # If not this, then should suppress rgb
   suppress_voxels_coo: False   # 0-mask the voxel coordinates with an occupancy_map
-  suppress_voxels_ov: True
-  suppress_voxels_rgb: True   # 0-mask the voxel rgb values with an occupancy_map
+  suppress_voxels_ov: True   # 0-mask the voxel occupancy values with an occupancy_map
+  suppress_voxels_rgb: False   # 0-mask the voxel rgb values with an occupancy_map
   # Voxel splatting for training
   voxel_splatting: True   # Trains on values rendered by projecting voxels
   #----------------------
   # Ray cast for training
-  train_on_non_black: True   # Train only on non-black pixels
+  train_on_non_black: False   # Train only on non-black pixels
   n_training_rays: 4096   # Put 0 to disable training rays
   nearest_voxels: -1   # Put -1 to use voxels closer than threshold
   closeness_threshold: 10   # Pixel distance
   #----------------------
   render_full_image: True
-  render_full_image_every_n_epochs: 10
+  render_full_image_every_n_epochs: 100
   depth_refinement: False
   refinement_epochs: 100
 

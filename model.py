@@ -387,6 +387,7 @@ class UnaGenModel(nn.Module):
         self.standard_depth_f = opt['standard_depth_f']
         self.n_training_rays = opt['n_training_rays']
         self.mapping_dim = opt['mapping_dim']
+        self.occupancy_threshold = opt['occupancy_threshold']
         self.matrix_mapping = self.initialize_matrix_mapping(self.mapping_dim, 0.5).cuda()
         self.mapping_prob_density = torch.zeros_like(self.matrix_mapping).cuda()
 
@@ -656,8 +657,8 @@ class UnaGenModel(nn.Module):
             with torch.no_grad():
                 occupancy_field_0 = occupancy_field[0].view(-1).detach().cpu().numpy()
                 plt.hist(occupancy_field_0, bins=50)
-                plt.axvline(0.5, color='red')
-                plt.title(f'Occupancy field distribution, threshold: {np.mean(0.5):.4f}')
+                plt.axvline(self.occupancy_threshold, color='red')
+                plt.title(f'Occupancy field distribution, threshold: {self.occupancy_threshold:.4f}')
                 plt.ylabel('ov')
                 plt.xlabel('voxel')
                 plt.savefig('outputs/stats/occupancy_field_distribution.png')
@@ -1052,7 +1053,7 @@ class UnaGenModel(nn.Module):
         height, width = original_image.shape[2:]
         # n_training_rays = torch.tensor(self.n_training_rays).cuda()
 
-        occupancy_map = (occupancy_field > 0.5).float() # TODO: change back to 0.5
+        occupancy_map = (occupancy_field > self.occupancy_threshold).float() 
         if torch.count_nonzero(occupancy_map)==0:
             occupancy_map[:, 0, 0] = 1  # This is to avoid the case where there are no occupied voxels
 
@@ -1108,14 +1109,14 @@ class UnaGenModel(nn.Module):
 
             # Compute depth
             depth = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
-            depth = (depth - depth.min()) / (depth.max() - depth.min())
+            depth = (depth - depth.min(dim=1, keepdim=True)[0]) / (depth.max(dim=1, keepdim=True)[0] - depth.min(dim=1, keepdim=True)[0])
 
             # Compute rendered_rgb_values
             if self.opt['render_with_ov']:
                 rendered_rgb_values = occupied_voxels_ov * occupied_voxels_rgb  
             else:
                 rendered_rgb_values = occupied_voxels_rgb 
-            #rendered_rgb_values = rendered_rgb_values + (original_rgb_values - rendered_rgb_values) * ((depth.unsqueeze(-1))**3)   # Correction term for further voxels
+            rendered_rgb_values = rendered_rgb_values + (original_rgb_values - rendered_rgb_values) * (((1 - occupied_voxels_ov) * depth.unsqueeze(-1)))   # Correction term for further voxels
             print("rendered_rgb_values min:", rendered_rgb_values.min())
             print("rendered_rgb_values max:", rendered_rgb_values.max())
             print("original_rgb_values min:", original_rgb_values.min())
@@ -1160,13 +1161,13 @@ class UnaGenModel(nn.Module):
             body_center_ray, _ = get_rays(body_center, self.intrinsics, self.pose)
             #body_center_ray = torch.normalize(body_center_ray, dim=2)
             body_center_ray_0 = body_center_ray[0][0]
-            t = torch.linspace(0, 10, num_points).cuda()  # Change the range as needed
+            t = torch.linspace(0, 4, num_points).cuda()  # Change the range as needed
             points = (self.cam_loc[0] + body_center_ray_0 * t[:, None]).detach()
             ax.scatter(points[:, 0].cpu().numpy(), points[:, 1].cpu().numpy(), points[:, 2].cpu().numpy(), color='green', linewidth=0.1)
 
             x_m_ray = torch.mean(ray_dirs_0[-2:], dim=0)
             y_m_ray = torch.mean(torch.stack((ray_dirs_0[0], ray_dirs_0[2]), dim=0), dim=0)
-            t = torch.linspace(0, 10, num_points).cuda()  # Change the range as needed
+            t = torch.linspace(0, 4, num_points).cuda()  # Change the range as needed
             points = self.cam_loc[0] + x_m_ray * t[:, None]
             ax.scatter(points[:, 0].cpu().numpy(), points[:, 1].cpu().numpy(), points[:, 2].cpu().numpy(), color='black', linewidth=0.1)
             points = self.cam_loc[0] + y_m_ray * t[:, None]
@@ -1179,14 +1180,14 @@ class UnaGenModel(nn.Module):
 
             for i in range(min(16, test_0.shape[0])):
                 dir = test_0[i]
-                t = torch.linspace(0, 10, num_points).cuda()  # Change the range as needed
+                t = torch.linspace(0, 4, num_points).cuda()  # Change the range as needed
                 points = self.cam_loc[0] + dir * t[:, None]
 
                 ax.scatter(points[:, 0].cpu().numpy(), points[:, 1].cpu().numpy(), points[:, 2].cpu().numpy(), linewidth=0.1, alpha=0.6)
 
             for i in range(ray_dirs_0.shape[0]):
                 dir = ray_dirs_0[i]
-                t = torch.linspace(0, 10, num_points).cuda()  # Change the range as needed
+                t = torch.linspace(0, 4, num_points).cuda()  # Change the range as needed
                 points = self.cam_loc[0] + dir * t[:, None]
 
                 ax.scatter(points[:, 0].cpu().numpy(), points[:, 1].cpu().numpy(), points[:, 2].cpu().numpy(), color='black', linewidth=0.1)
@@ -1246,6 +1247,7 @@ class UnaGenModel(nn.Module):
                 # Create a mask for distances less than the threshold
                 threshold = self.opt['closeness_threshold']
                 mask = (distances < threshold)
+                print("number of close voxels:", torch.sum(mask, dim=2).max())
 
                 # Apply the mask to get the distances and indices of the voxels within the threshold
                 distances = distances / threshold 
@@ -1264,20 +1266,24 @@ class UnaGenModel(nn.Module):
                 print("mask max:", mask.max())
                 print("occupied_voxels_ov_expanded max:", occupied_voxels_ov_expanded[0].max())
                 print("occupied_voxels_rgb_expanded max:", occupied_voxels_rgb_expanded[0].max())
-                occupied_voxels_ov_selected = torch.where(mask, occupied_voxels_ov_expanded, torch.zeros_like(occupied_voxels_ov_expanded))
+                occupied_voxels_ov_selected = torch.where(mask, occupied_voxels_ov_expanded, torch.zeros_like(occupied_voxels_ov_expanded))   # Put ones for the formula, it nullifies non considered voxels' contributes
                 occupied_voxels_rgb_selected = torch.where(mask, occupied_voxels_rgb_expanded, torch.zeros_like(occupied_voxels_rgb_expanded))
                 #occupied_voxels_ov_selected = occupied_voxels_ov_expanded * mask
                 #occupied_voxels_rgb_selected = occupied_voxels_rgb_expanded * mask
                 print("occupied_voxels_ov_selected max:", occupied_voxels_ov_selected[0].max())
                 print("occupied_voxels_ov_selected max:", occupied_voxels_rgb_selected[0].max())
 
+                eps = 1e-6
                 depth_all = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
                 depth_all = (depth_all - depth_all.min(dim=1, keepdim=True)[0]) / (depth_all.max(dim=1, keepdim=True)[0] - depth_all.min(dim=1, keepdim=True)[0])
                 depth_all = depth_all.unsqueeze(1).unsqueeze(-1).expand_as(mask)
-                depth = torch.where(mask, depth_all, torch.ones_like(depth_all))   # far voxels have distance 1
+                depth = torch.where(mask, depth_all, torch.zeros_like(depth_all))   # far voxels are suppress to normalize
+                depth = (depth - depth.min(dim=2, keepdim=True)[0]) / (depth.max(dim=2, keepdim=True)[0] - depth.min(dim=2, keepdim=True)[0] + eps)
+                depth = torch.where(mask, depth, torch.ones_like(depth))   # far voxels have distance 1
                 print("torch.sum((1 - depth), dim=2) min:", torch.sum((1 - depth), dim=2).min())
                 print("torch.sum((1 - depth), dim=2) max:", torch.sum((1 - depth), dim=2).max())
 
+                print("occupied_voxels_rgb_selected shape:", occupied_voxels_rgb_selected.shape)
                 eps = 1e-6
                 # Compute rendered_rgb_values_add
                 if self.opt['render_with_ov']:
@@ -1337,7 +1343,7 @@ class UnaGenModel(nn.Module):
         '''Render image from occupancy field and rgb field.'''
         height, width = original_image.shape[2:]
 
-        occupancy_map = (occupancy_field > 0.5).float() 
+        occupancy_map = (occupancy_field > self.occupancy_threshold).float() 
         if torch.count_nonzero(occupancy_map)==0:
             occupancy_map[:, 0, 0] = 1  # This is to avoid the case where there are no occupied voxels
 
@@ -1417,8 +1423,8 @@ class UnaGenModel(nn.Module):
 
                 # Apply the mask to get the distances and indices of the voxels within the threshold
                 closest_voxel_distances = torch.where(mask, distances, torch.ones_like(distances))   # far voxels have distance 1
-                min_vals, _ = torch.min(closest_voxel_distances, dim=-1, keepdim=True)
-                max_vals, _ = torch.max(closest_voxel_distances, dim=-1, keepdim=True)
+                min_vals, _ = torch.min(closest_voxel_distances, dim=2, keepdim=True)
+                max_vals, _ = torch.max(closest_voxel_distances, dim=2, keepdim=True)
                 eps = 1e-6
                 closest_voxel_distances = ((closest_voxel_distances - min_vals) / (max_vals - min_vals + eps))
 
