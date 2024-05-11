@@ -93,6 +93,9 @@ def get_camera_params(uv, pose, intrinsics):
     # permute for batch matrix product
     pixel_points_cam = pixel_points_cam.permute(0, 2, 1)
 
+    print("Shape of p:", p.shape)
+    print("Shape of pixel_points_cam:", pixel_points_cam.shape)
+
     world_coords = torch.bmm(p, pixel_points_cam).permute(0, 2, 1)[:, :, :3]
     ray_dirs = world_coords - cam_loc[:, None, :]
     ray_dirs = F.normalize(ray_dirs, dim=2)

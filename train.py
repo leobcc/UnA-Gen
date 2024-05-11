@@ -23,14 +23,19 @@ def train():
     num_epochs = confs['num_epochs']
     frame_skip = confs['frame_skip']
     continue_training = confs['continue_training']
-    
+
+    transform = transforms.Compose([
+                        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
     dataset = una_gen_dataset(data_dir="/UnA-Gen/data/data", split='train', frame_skip=frame_skip, transform=None)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=confs['shuffle'], num_workers=confs['num_workers'])
 
     model = UnaGenModel(confs['model'], in_channels=3, features=128) 
     num_params = sum(p.numel() for p in model.parameters())
+    num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('----------------------------------------------')
-    print(f'The model has {num_params} parameters')
+    print('Total parameters: {:.2f}M'.format(num_params / 1e6))
+    print('Trainable parameters: {:.2f}M'.format(num_trainable_params / 1e6))
     print('----------------------------------------------')
 
     optimizer = optim.SGD(model.parameters(), lr=learning_rate)
@@ -49,8 +54,10 @@ def train():
     model.to(device)
     print(f'Model moved to {device}')
 
+    torch.autograd.set_detect_anomaly(True)
+    
     for epoch in range(num_epochs):
-        print(f'Training Epoch [{epoch+1}/{num_epochs}]')
+        print(f'Training Epoch [{epoch+1}/{num_epochs}]', end='\r')
         model.train()
         total_loss = 0
 
@@ -61,53 +68,72 @@ def train():
             inputs['masked_image'] = inputs['masked_image'].to(device)
             if model.visualize_stats:
                 save_image(inputs['masked_image'], 'outputs/stats/original_image.png')
+                save_image(inputs['depth_image'], 'outputs/stats/depth_image.png')
 
-            outputs = model(inputs)
-        
-            loss = loss_c(confs['loss'], outputs)
-            total_loss += loss.item()
+            if confs['model']['depth_refinement'] and epoch % confs['model']['refinement_epochs'] == 0:
+                print(f'Refinement epoch: {epoch}, ETA: {batch_idx}/{len(dataloader)}', end='\r')
+                model.refinement(inputs)
 
-            opt_t0 = time.time()
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            opt_t1 = time.time()
+                opt_t0 = time.time()
+                opt_t1 = time.time()
+            else:
+                outputs = model(inputs)
             
-            t1 = time.time()
+                loss = loss_c(confs['loss'], outputs)
+                total_loss += loss.item()
 
-            if model.visualize_stats:
-                batch_time.append(t1-t0)
-                opt_time.append(opt_t1-opt_t0)
-                print(f'Epoch [{epoch+1}/{num_epochs}], Batch [{batch_idx+1}/{len(dataloader)}], Loss: {loss.item():.4f}, Time: {batch_time[-1]:.4f}', end='\r')
-
-                plt.plot(batch_time)
-                plt.axhline(np.mean(batch_time), color='red')
-                plt.title(f'Batch time, avg: {np.mean(batch_time):.4f}')
-                plt.ylabel('Time')
-                plt.xlabel('Batch')
-                plt.savefig('outputs/stats/batch_time.png')
-                plt.close()
-
-                plt.plot(opt_time)
-                plt.axhline(np.mean(opt_time), color='red')
-                plt.title(f'Optimization time, avg: {np.mean(opt_time):.4f}')
-                plt.ylabel('Time')
-                plt.xlabel('Batch')
-                plt.savefig('outputs/stats/opt_time.png')
-                plt.close()
-
-                if epoch != 0 and epoch % 100 == 0:
-                    with torch.no_grad():
-                        print('Rendering images')
-                        ren_t0 = time.time()
-                        rendered_image = model.render_image(outputs['dynamical_voxels_coo'], outputs['occupancy_field'], outputs['rgb_field'], inputs['masked_image'])
-                        ren_t1 = time.time()
-                        print(f'Rendering took {ren_t1-ren_t0} seconds')
-                        rendered_image = rendered_image.view(inputs['masked_image'].shape)
-                        
-                        save_image(inputs['masked_image'], 'outputs/stats/original_image.png')
-                        save_image(rendered_image, 'outputs/stats/rendered_image.png')
+                opt_t0 = time.time()
+                loss.backward()
+                #print("Gradient of scale:", model.scale.grad)
+                #print("Gradient of standard depth n:", model.standard_depth_n.grad)
+                optimizer.step()
+                optimizer.zero_grad()
+                opt_t1 = time.time()
             
+                t1 = time.time()
+
+                if model.visualize_stats:
+                    batch_time.append(t1-t0)
+                    opt_time.append(opt_t1-opt_t0)
+                    print(f'Epoch [{epoch+1}/{num_epochs}], Batch [{batch_idx+1}/{len(dataloader)}], Loss: {loss.item():.4f}, Time: {batch_time[-1]:.4f}', end='\r')
+
+                    plt.plot(batch_time)
+                    plt.axhline(np.mean(batch_time), color='red')
+                    plt.title(f'Batch time, avg: {np.mean(batch_time):.4f}')
+                    plt.ylabel('Time')
+                    plt.xlabel('Batch')
+                    plt.savefig('outputs/stats/batch_time.png')
+                    plt.close()
+
+                    plt.plot(opt_time)
+                    plt.axhline(np.mean(opt_time), color='red')
+                    plt.title(f'Optimization time, avg: {np.mean(opt_time):.4f}')
+                    plt.ylabel('Time')
+                    plt.xlabel('Batch')
+                    plt.savefig('outputs/stats/opt_time.png')
+                    plt.close()
+
+                    if confs['model']['render_full_image'] and epoch != 0 and epoch % confs['model']['render_full_image_every_n_epochs'] == 0:
+                        with torch.no_grad():
+                            print('Rendering images --------------------------')
+                            ren_t0 = time.time()
+                            rendered_image = model.render_image(outputs['dynamical_voxels_coo'], outputs['occupancy_field'], outputs['rgb_field'], inputs['masked_image'])
+                            ren_t1 = time.time()
+                            print(f'Rendering took {ren_t1-ren_t0} seconds')
+                            rendered_image = rendered_image.view(inputs['masked_image'].shape)
+                            
+                            save_image(inputs['masked_image'], 'outputs/stats/original_image.png')
+                            save_image(rendered_image, 'outputs/stats/rendered_image.png')
+            
+        # On refinement epoch end: prune the matrix mapping
+        if confs['model']['depth_refinement'] and epoch % confs['model']['refinement_epochs'] == 0:  
+            print("model.mapping_prob_density max:", model.mapping_prob_density.max())
+            print("model.mapping_prob_density min:", model.mapping_prob_density.min())
+            model.mapping_prob_density = model.mapping_prob_density / (len(dataloader)*batch_size)
+            print("model.mapping_prob_density max:", model.mapping_prob_density.max())
+            print("model.mapping_prob_density min:", model.mapping_prob_density.min())
+            threshold = 0.2
+            model.matrix_mapping = (model.mapping_prob_density > threshold).float()
 
         torch.save(model.state_dict(), 'outputs/last.pth')
 

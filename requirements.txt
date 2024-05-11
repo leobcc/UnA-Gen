@@ -1,0 +1,7 @@
+h5py 
+opencv-python-headless
+open3d
+gdown
+libglfw3
+chumpy
+'git+https://github.com/facebookresearch/pytorch3d.git'
