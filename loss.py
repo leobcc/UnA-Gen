@@ -5,7 +5,7 @@ def loss_c(confs, outputs):
     """
     Compute the loss given the outputs and the inputs.
     """
-    rendering_loss = F.l1_loss(outputs['original_rgb_values'], outputs['rendered_rgb_values'], reduction='mean')
+    rendering_loss = F.mse_loss(outputs['rendered_rgb_values'], outputs['original_rgb_values'])
     regularization = 0.0
 
     if confs['binary_cross_entropy']:

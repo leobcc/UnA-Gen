@@ -12,6 +12,7 @@ from torchvision import transforms
 import time
 from utils import get_camera_loc, coordinates_projection_map, get_boundaries, get_rays, get_uv
 from collections import OrderedDict
+import wandb
 
 import cv2
 from torchvision.transforms import Compose
@@ -148,7 +149,7 @@ class RGBfield_fc(nn.Module):
         return x
 
 class OccupancyField_cnn(nn.Module):
-    def __init__(self, in_features=35, num_classes=1):
+    def __init__(self, in_features=35, depth_levels=1):
         super(OccupancyField_cnn, self).__init__()
 
         self.conv = nn.Sequential(
@@ -166,27 +167,23 @@ class OccupancyField_cnn(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=8, out_channels=8, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=1, stride=1, padding=0),
             nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=8, out_channels=4, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=4, out_channels=3, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1, padding=0),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=3, out_channels=num_classes, kernel_size=3, stride=1, padding=1),
-            nn.Sigmoid(),
+            nn.Conv2d(in_channels=16, out_channels=depth_levels, kernel_size=3, stride=1, padding=1),
         )
 
     def forward(self, x):
         x = self.conv(x)
-        return x
+        return torch.sigmoid(8 * x)
 
 class RGBfield_cnn(nn.Module):
-    def __init__(self, in_features=35, num_classes=3, view_dependent=False):
+    def __init__(self, in_features=35, depth_levels=3, view_dependent=False):
         super(RGBfield_cnn, self).__init__()
+
+        self.view_dependent = view_dependent
+        self.depth_levels = depth_levels
 
         if not view_dependent:
             self.conv = nn.Sequential(
@@ -208,8 +205,7 @@ class RGBfield_cnn(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1, padding=0),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(in_channels=3, out_channels=num_classes, kernel_size=3, stride=1, padding=1),
-                nn.Sigmoid(),
+                nn.Conv2d(in_channels=3, out_channels=3, kernel_size=3, stride=1, padding=1),
             )
         elif view_dependent:
             self.conv = nn.Sequential(
@@ -251,8 +247,7 @@ class RGBfield_cnn(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1, padding=0),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(in_channels=3, out_channels=1, kernel_size=3, stride=1, padding=1),         
-                nn.Sigmoid(),
+                nn.Conv2d(in_channels=3, out_channels=depth_levels, kernel_size=3, stride=1, padding=1),         
             )
             self.conv_g = nn.Sequential(
                 nn.Conv2d(in_channels=9, out_channels=9, kernel_size=3, stride=1, padding=1),
@@ -273,8 +268,7 @@ class RGBfield_cnn(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1, padding=0),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(in_channels=3, out_channels=1, kernel_size=3, stride=1, padding=1),         
-                nn.Sigmoid(),
+                nn.Conv2d(in_channels=3, out_channels=depth_levels, kernel_size=3, stride=1, padding=1),         
             )
             self.conv_b = nn.Sequential(
                 nn.Conv2d(in_channels=9, out_channels=9, kernel_size=3, stride=1, padding=1),
@@ -295,9 +289,120 @@ class RGBfield_cnn(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Conv2d(in_channels=3, out_channels=3, kernel_size=1, stride=1, padding=0),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(in_channels=3, out_channels=1, kernel_size=3, stride=1, padding=1),         
-                nn.Sigmoid(),
+                nn.Conv2d(in_channels=3, out_channels=depth_levels, kernel_size=3, stride=1, padding=1),         
             )
+
+    def forward(self, x):
+        if self.view_dependent:
+            x = self.conv(x)
+            x_r = self.conv_r(x)
+            x_g = self.conv_g(x)
+            x_b = self.conv_b(x)
+            x = torch.cat((x_r, x_g, x_b), dim=1)
+        else:
+            x = self.conv(x)
+        return torch.sigmoid(2 * x)
+    
+class cOccupancyField_cnn(nn.Module):
+    def __init__(self, in_features=35, out_channels=1):
+        super(cOccupancyField_cnn, self).__init__()
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=out_channels, kernel_size=3, stride=1, padding=1),
+            nn.Sigmoid(),     
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x
+
+class cRGBfield_cnn(nn.Module):
+    def __init__(self, in_features=35, out_channels=3, view_dependent=False):
+        super(cRGBfield_cnn, self).__init__()
+
+        self.view_dependent = view_dependent
+        self.out_channels = out_channels
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+        )
+        self.conv_r = nn.Sequential(
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=1, stride=1, padding=0), 
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=out_channels, kernel_size=3, stride=1, padding=1), 
+            nn.Sigmoid(),           
+        )
+        self.conv_g = nn.Sequential(
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=1, stride=1, padding=0), 
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=out_channels, kernel_size=3, stride=1, padding=1),       
+            nn.Sigmoid(),       
+        )
+        self.conv_b = nn.Sequential(
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=1, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=1, stride=1, padding=0), 
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=16, out_channels=out_channels, kernel_size=3, stride=1, padding=1), 
+            nn.Sigmoid(),        
+        )
 
     def forward(self, x):
         x = self.conv(x)
@@ -305,6 +410,7 @@ class RGBfield_cnn(nn.Module):
         x_g = self.conv_g(x)
         x_b = self.conv_b(x)
         x = torch.cat((x_r, x_g, x_b), dim=1)
+
         return x
     
 class worldParam(nn.Module):
@@ -392,9 +498,6 @@ class UnaGenModel(nn.Module):
         self.mapping_prob_density = torch.zeros_like(self.matrix_mapping).cuda()
 
         self.visualize_stats = opt['visualize_stats']
-        if self.visualize_stats:
-            self.time_forward_pass = []
-            self.time_rgb_values_rendering = []
 
         # Unet encoder initialization
         if opt['encoder']['name'] == 'unet':
@@ -443,19 +546,23 @@ class UnaGenModel(nn.Module):
             self.OccupancyField = OccupancyField_fc(in_features=features+3, num_classes=1).cuda()
             self.RGBField = RGBfield_fc(in_features=features+3, num_classes=3).cuda()
         elif self.opt['decoder']['name'] == "cnn":
-            self.OccupancyField = OccupancyField_cnn(in_features=features+3, num_classes=1).cuda()
-            if self.opt['decoder']['view_dependent_rgb']:
-                self.RGBField = RGBfield_cnn(in_features=features+3, num_classes=3, view_dependent=True).cuda()
+            if self.opt['decoder']['canonical']:
+                self.OccupancyField = cOccupancyField_cnn(in_features=features+3, out_channels=self.mapping_dim).cuda()
             else:
-                self.RGBField = RGBfield_cnn(in_features=features+3, num_classes=3, view_dependent=False).cuda()
-
-        '''
-        for param in self.OccupancyField.parameters():
-            param.requires_grad = False
-
-        for param in self.RGBField.parameters():
-            param.requires_grad = False
-        '''
+                if self.opt['decoder']['occupancy_depth_dep']:
+                    self.OccupancyField = OccupancyField_cnn(in_features=features+3, depth_levels=10).cuda()
+                else:
+                    self.OccupancyField = OccupancyField_cnn(in_features=features+3, depth_levels=1).cuda()
+            if self.opt['decoder']['view_dependent_rgb']:
+                if self.opt['decoder']['canonical']:
+                    self.RGBField = cRGBfield_cnn(in_features=features+3, out_channels=self.mapping_dim).cuda()
+                else:
+                    if self.opt['decoder']['rgb_depth_dep']:
+                        self.RGBField = RGBfield_cnn(in_features=features+3, depth_levels=3, view_dependent=True).cuda()    
+                    else:
+                        self.RGBField = RGBfield_cnn(in_features=features+3, depth_levels=1, view_dependent=True).cuda()
+            else:
+                self.RGBField = RGBfield_cnn(in_features=features+3, depth_levels=1, view_dependent=False).cuda()
 
         self.apply(self.weights_init)   # weights initialization
 
@@ -480,24 +587,6 @@ class UnaGenModel(nn.Module):
         self.scale = torch.tensor(1.0).unsqueeze(0).unsqueeze(0).repeat(self.batch_size, 3).cuda()
         self.trans = torch.tensor(0.0).unsqueeze(0).unsqueeze(0).repeat(self.batch_size, 3).cuda()
 
-        # ---
-        with torch.no_grad():
-            image_np = inputs['masked_image'][1].cpu().numpy().transpose(1, 2, 0)
-            image_np = (image_np * 255).astype(np.uint8)
-
-            # Normalize the parameters to the image dimensions
-            x = int((-self.smpl_params[1, 4].item() + 1) / 2 * image_np.shape[1])
-            y = int((-self.smpl_params[1, 5].item() + 1) / 2 * image_np.shape[0])
-
-            image_np = np.ascontiguousarray(image_np)
-
-            # Draw a red circle at the specified position
-            cv2.circle(image_np, (x, y), radius=5, color=(0, 0, 255), thickness=-1)
-
-            # Save the image
-            cv2.imwrite('image_with_dot.png', image_np)
-        # ---
-
         matrix_mapping = self.matrix_mapping
 
         with torch.no_grad():
@@ -508,15 +597,6 @@ class UnaGenModel(nn.Module):
             # The metric spaces are used to establish the 1-1 correspondence by skinning
             # The normalized spaces are used to establish the 1-1 correspondence by the feature encoder and evaluate the networks
             self.fov_bounds, self.cam_loc = get_boundaries(image, self.intrinsics, self.pose)   # These parameters are used throught many methods
-
-            # We select the rays corresponding to the spanning of our dynamical space with the active voxels
-            '''
-            u_span = torch.linspace(2, image_width-2, self.mapping_dim).cuda()   # Here we pad a bit, for the features to be interpolated
-            v_span = torch.linspace(2, image_height-2, self.mapping_dim).cuda()   # and also to avoid waste. This parameter can be learned TODO
-            u_span, v_span = torch.meshgrid(u_span, v_span)
-            uv = torch.stack((u_span.flatten(), v_span.flatten()), dim=-1).float().cuda()
-            ray_dirs, cam_loc = get_rays(uv, intrinsics, pose)
-            '''
 
             # The active voxels are mapped by the matrix_mapping (while in the canonical space)
             # TODO: Implement the mapping of the active voxels by the matrix_mapping 
@@ -532,9 +612,13 @@ class UnaGenModel(nn.Module):
                 world_canonical_voxels_coo = canonical_voxels_coo.unsqueeze(0).repeat(self.batch_size, 1, 1)
                 world_canonical_voxels_coo = self.norm_to_world_coo(world_canonical_voxels_coo, self.cam_loc, self.fov_bounds)
                 dynamical_voxels_coo = self.dynamical_tfs_from_canonical(world_canonical_voxels_coo, smpl_tfs, betas, gender, batch=True)   # To be tested if it works
+                dynamical_voxels_world_coo = dynamical_voxels_coo
                 self.visualize_voxels(world_canonical_voxels_coo[0], output_file='canonical_voxels_world_coo.png', world=True)
             elif self.opt['smpl_transform'] == 'norm':
                 dynamical_voxels_coo = self.dynamical_tfs_from_canonical(canonical_voxels_coo, smpl_tfs, betas, gender, batch=False)
+                dynamical_voxels_world_coo = self.norm_to_world_coo(dynamical_voxels_coo, self.cam_loc, self.fov_bounds)
+            
+            voxels_uv, _, _ = get_uv(dynamical_voxels_world_coo, self.cam_loc, self.intrinsics, self.pose)
                 
             if self.visualize_stats:
                self.visualize_voxels(dynamical_voxels_coo[0], output_file='dynamical_voxels.png', world=True)
@@ -553,7 +637,7 @@ class UnaGenModel(nn.Module):
                     features_r = self.RenderingEncoder(image)
                 else:
                     features = self.encoder(image)
-                    features_r = features.clone()
+                    features_r = features
 
             if self.opt['encoder']['name'] == 'dpt':
                 transform = Compose([
@@ -583,7 +667,7 @@ class UnaGenModel(nn.Module):
                     #test_normalized = (test - mean) / std
                     features[i] = test   
 
-                features_r = features.clone()
+                features_r = features
 
         elif not self.opt['encoder']['train']:   # Training of the encoder is paused
             with torch.no_grad():   
@@ -593,7 +677,7 @@ class UnaGenModel(nn.Module):
                         features_r = self.RenderingEncoder(image)
                     else:
                         features = self.encoder(image)
-                        features_r = features.clone()
+                        features_r = features
 
                 if self.opt['encoder']['name'] == 'dpt':
                     transform = Compose([
@@ -623,21 +707,14 @@ class UnaGenModel(nn.Module):
                         #test_normalized = (test - mean) / std
                         features[i] = test   
 
-                    features_r = features.clone()                 
+                    features_r = features               
 
         # Infer world change of coordinates (batch_size, n_samples, 131)
         if self.opt['learn_world_params']:   # We need to compute this before if the smpl transform is done in world coo, as it's needed in world coo transform
             world_param = self.worldParams(features)
             self.scale = world_param[:, :3]
             self.trans = world_param[:, 3:]            
-
-        with torch.no_grad():
-            if self.opt['smpl_transform'] == 'norm':
-                dynamical_voxels_world_coo = self.norm_to_world_coo(dynamical_voxels_coo, self.cam_loc, self.fov_bounds)
-            elif self.opt['smpl_transform'] == 'world':
-                dynamical_voxels_world_coo = dynamical_voxels_coo
-            voxels_uv = get_uv(dynamical_voxels_world_coo, self.cam_loc, self.intrinsics, self.pose)
-
+  
         if self.opt['decoder']['name'] == 'fc':
             features = self.interpolate_to_voxels(features, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo)
             occupancy_field = self.OccupancyField(features.view(-1, features.shape[-1]))
@@ -645,47 +722,44 @@ class UnaGenModel(nn.Module):
             
         elif self.opt['decoder']['name'] == 'cnn':
             occupancy_field = self.OccupancyField(features)
-            occupancy_field = self.interpolate_to_voxels(occupancy_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False)
+            if self.opt['decoder']['canonical']:
+                occupancy_field = self.interpolate_to_voxels(occupancy_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False, int_to_cano='canonical')
+            else:
+                if self.opt['decoder']['occupancy_depth_dep']:    
+                    occupancy_field = self.interpolate_to_voxels(occupancy_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False, depth_dep=True)
+                else:
+                    occupancy_field = self.interpolate_to_voxels(occupancy_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False, depth_dep=False)
 
         if self.opt['relative_ov']:
-            min_values, _ = torch.min(occupancy_field, dim=1, keepdim=True)
-            max_values, _ = torch.max(occupancy_field, dim=1, keepdim=True)
             eps = 1e-6
-            occupancy_field = (occupancy_field - min_values) / (max_values - min_values + eps)
+            occupancy_field = (occupancy_field - torch.min(occupancy_field, dim=1, keepdim=True)[0]) / (torch.max(occupancy_field, dim=1, keepdim=True)[0] - torch.min(occupancy_field, dim=1, keepdim=True)[0] + eps)
 
         if self.visualize_stats:
             with torch.no_grad():
                 occupancy_field_0 = occupancy_field[0].view(-1).detach().cpu().numpy()
-                plt.hist(occupancy_field_0, bins=50)
-                plt.axvline(self.occupancy_threshold, color='red')
-                plt.title(f'Occupancy field distribution, threshold: {self.occupancy_threshold:.4f}')
-                plt.ylabel('ov')
-                plt.xlabel('voxel')
-                plt.savefig('outputs/stats/occupancy_field_distribution.png')
-                plt.close()
+                wandb.log({"Occupancy field values distribution": wandb.Histogram(occupancy_field_0)})
 
         # --- Rendering ---
         if self.opt['decoder']['name'] == 'fc':
-            features_r = self.interpolate_to_voxels(features_r, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo)
+            features_r = self.interpolate_to_voxels(features_r, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=True)
 
         rgb_field = self.RGBField(features_r)
         if self.opt['decoder']['name'] == 'fc':
             rgb_field = rgb_field.view(self.batch_size, features_r.shape[1], -1)
         elif self.opt['decoder']['name'] == 'cnn':
-            rgb_field = self.interpolate_to_voxels(rgb_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False)
+            if self.opt['decoder']['canonical']:
+                rgb_field = self.interpolate_to_voxels(rgb_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False, rgb=True, int_to_cano='canonical')
+            else:
+                if self.opt['decoder']['rgb_depth_dep']:
+                    rgb_field = self.interpolate_to_voxels(rgb_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False, depth_dep=True, rgb=True)
+                else:
+                    rgb_field = self.interpolate_to_voxels(rgb_field, dynamical_voxels_world_coo, voxels_uv, canonical_voxels_coo, add_coo=False, depth_dep=False, rgb=True)
 
         # ---
         if self.visualize_stats:
             with torch.no_grad():
                 rgb_field_0 = rgb_field[0].detach().cpu().numpy()
-                plt.hist(rgb_field_0[:,0], bins=50, color='red')
-                plt.hist(rgb_field_0[:,1], bins=50, color='green')
-                plt.hist(rgb_field_0[:,2], bins=50, color='blue')
-                plt.title('rgb field values distribution')
-                plt.ylabel('rgb')
-                plt.xlabel('voxel')
-                plt.savefig('outputs/stats/RGB_field_distribution.png')
-                plt.close()
+                wandb.log({"RGB field values distribution": wandb.Histogram(rgb_field_0)})
 
         # The output of the occupancy field is used to compute the volume if needed
         # TODO: Implement the computation of the volume using the occupancy field as a separate method of the model, which can be called from outside
@@ -706,14 +780,7 @@ class UnaGenModel(nn.Module):
 
         if self.visualize_stats:
             with torch.no_grad():
-                self.time_rgb_values_rendering.append(t1_render_rgb_values - t0_render_rgb_values)
-                plt.plot(self.time_rgb_values_rendering)
-                plt.axhline(np.mean(self.time_rgb_values_rendering), color='red')
-                plt.title(f'RGB values rendering, avg: {np.mean(self.time_rgb_values_rendering):.4f}')
-                plt.ylabel('Time')
-                plt.xlabel('Batch')
-                plt.savefig('outputs/stats/RGB_values_rendering.png')
-                plt.close()
+                wandb.log({"Time for rendering rgb values": (t1_render_rgb_values - t0_render_rgb_values)})
 
         outputs = {'dynamical_voxels_coo': dynamical_voxels_world_coo, 
                    'occupancy_field': occupancy_field, 
@@ -724,14 +791,7 @@ class UnaGenModel(nn.Module):
         t1 = time.time()
         if self.visualize_stats:
             with torch.no_grad():
-                self.time_forward_pass.append(t1-t0)
-                plt.plot(self.time_forward_pass)
-                plt.axhline(np.mean(self.time_forward_pass), color='red')
-                plt.title(f'Forward pass, avg: {np.mean(self.time_forward_pass):.4f}')
-                plt.ylabel('Time')
-                plt.xlabel('Batch')
-                plt.savefig('outputs/stats/forward_pass_time.png')
-                plt.close()
+                wandb.log({"Time for forward pass": t1-t0})
             
         if False:
             ren_t0 = time.time()
@@ -804,8 +864,7 @@ class UnaGenModel(nn.Module):
                 dynamical_voxels_coo = self.dynamical_tfs_from_canonical(canonical_voxels_coo, smpl_tfs, betas, gender, batch=False)
                 dynamical_voxels_coo = self.norm_to_world_coo(dynamical_voxels_coo, self.cam_loc, self.fov_bounds)
 
-          
-            dynamical_voxels_uv = get_uv(dynamical_voxels_coo, self.cam_loc, self.intrinsics, self.pose)
+            dynamical_voxels_uv, _, _ = get_uv(dynamical_voxels_coo, self.cam_loc, self.intrinsics, self.pose)
             voxels_depth_values = torch.zeros(dynamical_voxels_coo.shape[0], dynamical_voxels_coo.shape[1], device=dynamical_voxels_coo.device)
 
             height, width = image.shape[-2:]
@@ -882,7 +941,16 @@ class UnaGenModel(nn.Module):
         voxels_coo = voxels_coo + cam_loc.unsqueeze(1).expand_as(voxels_coo)  
 
         # Depth translation: base
-        voxels_coo = voxels_coo + central_ray.unsqueeze(1).expand_as(voxels_coo)*(self.opt['standard_scale_z'] + self.standard_depth_n) 
+        if self.opt['smpl_transform'] == 'world':
+            voxels_coo = voxels_coo + central_ray.unsqueeze(1).expand_as(voxels_coo)*(self.opt['standard_scale_z'] + self.standard_depth_n) 
+            #body_center = self.smpl_params[:, 4:6].clone().unsqueeze(1)
+            #body_dir, _ = get_rays(body_center, self.intrinsics, self.pose)
+            #voxels_coo = voxels_coo + body_dir.expand_as(voxels_coo)*(self.opt['standard_scale_z'] + self.standard_depth_n)
+        elif self.opt['smpl_transform'] == 'norm':
+            #voxels_coo = voxels_coo + central_ray.unsqueeze(1).expand_as(voxels_coo)*(self.opt['standard_scale_z'] + self.standard_depth_n) 
+            body_center = self.smpl_params[:, 4:6].clone().unsqueeze(1)
+            body_dir, _ = get_rays(body_center, self.intrinsics, self.pose)
+            voxels_coo = voxels_coo + body_dir.expand_as(voxels_coo)*(self.opt['standard_scale_z'] + self.standard_depth_n)
 
         # Depth translation: learnt
         #voxels_coo = voxels_coo + central_ray.unsqueeze(1).expand_as(voxels_coo)*(1*self.scale.unsqueeze(1).expand_as(voxels_coo))   # Depth translation
@@ -934,90 +1002,77 @@ class UnaGenModel(nn.Module):
             if output_file is None:
                 output_file = 'voxels_temp.png'
             output_file = os.path.join('outputs/stats/', output_file)
-            plt.savefig(output_file)
+            wandb.log({output_file: [wandb.Image(fig)]})
             plt.close()
 
         return
 
-    def interpolate_to_voxels(self, features, voxels_coo, voxels_uv, canonical_voxels_coo=None, add_coo=True):
-        '''At the moment we simply interpolate the features using the nearest neighbor interpolation.
-        Later on, we'll have to change it to a more sophisticated interpolation method.
-        N.B.: The coordinates are normalized in the min-max range, because the skinning transformation is deforming the [-1,1] range. (we need to check if this is correct)
-        '''
-        '''This part here uses uv coordinates corresponding to rays on which the voxels were sampled (dyn->can)
-        height, width = features.shape[2], features.shape[3]
-        interpolated_features = torch.zeros(features.size(0), voxels_coo.size(1), features.size(1) + voxels_coo.size(2)).to(features.device)
-        for i in range(uv.shape[0]):
-            u, v = uv[i]
-            u_int, v_int = u.long().item(), v.long().item()
-            u_frac, v_frac = u - u_int, v - v_int
-            interpolated_features[:, i*self.mapping_dim:(i+1)*self.mapping_dim, :features.shape[1]] = features[:, :, v_int, u_int].unsqueeze(1).repeat(1, self.mapping_dim, 1)*(1-u_frac)*(1-v_frac) + \
-                                                                                                    features[:, :, v_int, u_int+1].unsqueeze(1).repeat(1, self.mapping_dim, 1)*u_frac*(1-v_frac) + \
-                                                                                                    features[:, :, v_int+1, u_int].unsqueeze(1).repeat(1, self.mapping_dim, 1)*(1-u_frac)*v_frac + \
-                                                                                                    features[:, :, v_int+1, u_int+1].unsqueeze(1).repeat(1, self.mapping_dim, 1)*u_frac*v_frac
-            interpolated_features[:, i*self.mapping_dim:(i+1)*self.mapping_dim, features.shape[1]:] = voxels_coo[:, i*self.mapping_dim:(i+1)*self.mapping_dim, :]
-        
-        '''
-        
-        '''
-        interpolated_features = torch.zeros(self.batch_size, voxels_coo.size(1), features.size(1) + voxels_coo.size(2)).to(features.device)
-
-        for image_idx in range(self.batch_size):
-            for voxel_idx in range(voxels_coo.shape[1]):
-                x, y = voxels_uv[image_idx, voxel_idx, 0], voxels_uv[image_idx, voxel_idx, 1]
-                y_int, x_int = y.long().item(), x.long().item()
-                y_frac, x_frac = y - y_int, x - x_int
-
-                interpolated_features[image_idx, voxel_idx, :features.shape[1]] = features[image_idx, :, y_int, x_int]
-        if canonical_voxels_coo is not None:   # If the respective canonical voxels are provided, their canonical coordinates are passed
-            interpolated_features[:, :, features.shape[1]:] = canonical_voxels_coo.unsqueeze(0).repeat(self.batch_size, 1, 1)
-        else:
-            interpolated_features[:, :, features.shape[1]:] = voxels_coo
-        '''
-        if features.shape[2] == self.img_size[0] or features.shape[3] == self.img_size[1]:   # pixel-aligned features (unet encoder)
+    def interpolate_to_voxels(self, features, voxels_coo, voxels_uv, canonical_voxels_coo=None, add_coo=True, depth_dep=False, rgb=False, int_to_cano=False):
+        '''This method is used to interpolate the features to the voxels.'''
+        if features.shape[2] == self.img_size[0] and features.shape[3] == self.img_size[1]:   # pixel-aligned features (unet encoder)
             x_int = voxels_uv[..., 0].long()
             y_int = voxels_uv[..., 1].long()
         else:
             x_int = ((voxels_uv[..., 0] / self.img_size[1]) * features.shape[3]).long()
             y_int = ((voxels_uv[..., 1] / self.img_size[0]) * features.shape[2]).long()
            
+        # Use advanced indexing to gather features 
+        if not int_to_cano:
+            if add_coo:
+                interpolated_features = torch.zeros(self.batch_size, voxels_coo.size(1), features.size(1) + voxels_coo.size(2)).to(features.device)
+            else:
+                interpolated_features = torch.zeros(self.batch_size, voxels_coo.size(1), features.size(1)).to(features.device)
+            interpolated_features[..., :features.shape[1]] = features[torch.arange(features.shape[0]).unsqueeze(1), :, y_int, x_int]
 
-        # Use advanced indexing to gather features (I hope this is correct, should verify)
-        if add_coo:
-            interpolated_features = torch.zeros(self.batch_size, voxels_coo.size(1), features.size(1) + voxels_coo.size(2)).to(features.device)
-        else:
-            interpolated_features = torch.zeros(self.batch_size, voxels_coo.size(1), features.size(1)).to(features.device)
-        interpolated_features[..., :features.shape[1]] = features[torch.arange(features.shape[0]).unsqueeze(1), :, y_int, x_int]
+            if add_coo and canonical_voxels_coo is not None:   # If the respective canonical voxels are provided, their canonical coordinates are passed
+                interpolated_features[..., features.shape[1]:] = canonical_voxels_coo.unsqueeze(0).repeat(self.batch_size, 1, 1)
+            elif add_coo:
+                interpolated_features[..., features.shape[1]:] = voxels_coo
+            else:
+                pass
 
-        if add_coo and canonical_voxels_coo is not None:   # If the respective canonical voxels are provided, their canonical coordinates are passed
-            interpolated_features[..., features.shape[1]:] = canonical_voxels_coo.unsqueeze(0).repeat(self.batch_size, 1, 1)
-        elif add_coo:
-            interpolated_features[..., features.shape[1]:] = voxels_coo
-        else:
-            pass
-
-        '''Old method, extremely naive
-        height, width = features.shape[2], features.shape[3]
-        y = voxels_coo[:, :, 0]
-        x = voxels_coo[:, :, 1]
-        y_min, y_max = torch.min(y), torch.max(y)
-        x_min, x_max = torch.min(x), torch.max(x)
-        fy = (y - y_min) / (y_max - y_min) * (height - 1)
-        fx = (x - x_min) / (x_max - x_min) * (width - 1)
-        fy = fy.long()
-        fx = fx.long()
-
-        interpolated_features = torch.zeros(features.size(0), voxels_coo.size(1), features.size(1) + voxels_coo.size(2)).to(features.device)
-
-        batch_indices = torch.arange(features.size(0)).unsqueeze(1).expand_as(fy).to(features.device)
-
-        interpolated_features[:, :, :features.shape[1]] = features[batch_indices, :, fy, fx]
-        if canonical_voxels_coo is not None:   # If the respective canonical voxels are provided, their canonical coordinates are passed
-            interpolated_features[:, :, features.shape[1]:] = canonical_voxels_coo.unsqueeze(0).repeat(self.batch_size, 1, 1)
-        else:
-            interpolated_features[:, :, features.shape[1]:] = voxels_coo
-        '''
+            if depth_dep:
+                if not rgb:
+                    depth_values = voxels_coo[:, :, 2]
+                    depth_values = (depth_values - depth_values.min(dim=1, keepdim=True)[0]) / (depth_values.max(dim=1, keepdim=True)[0] - depth_values.min(dim=1, keepdim=True)[0]) 
+                    z_int = (depth_values * (features.shape[1] - 1)).long()
+                    features = interpolated_features[torch.arange(interpolated_features.shape[0]).unsqueeze(1), torch.arange(interpolated_features.shape[1]), z_int]
+                    features = features.unsqueeze(-1)
+                if rgb:
+                    depth_values = voxels_coo[:, :, 2]
+                    depth_values = (depth_values - depth_values.min(dim=1, keepdim=True)[0]) / (depth_values.max(dim=1, keepdim=True)[0] - depth_values.min(dim=1, keepdim=True)[0]) 
+                    z_r_int = (depth_values * (int(features.shape[1]//3) - 1)).long()
+                    z_g_int = (depth_values * (int(features.shape[1]//3) - 1)).long() + features.shape[1]//3
+                    z_b_int = (depth_values * (int(features.shape[1]//3) - 1)).long() + 2*features.shape[1]//3
+                    r = interpolated_features[torch.arange(interpolated_features.shape[0]).unsqueeze(1), torch.arange(interpolated_features.shape[1]), z_r_int].unsqueeze(-1)
+                    g = interpolated_features[torch.arange(interpolated_features.shape[0]).unsqueeze(1), torch.arange(interpolated_features.shape[1]), z_g_int].unsqueeze(-1)
+                    b = interpolated_features[torch.arange(interpolated_features.shape[0]).unsqueeze(1), torch.arange(interpolated_features.shape[1]), z_b_int].unsqueeze(-1)
+                    features = torch.cat((r, g, b), dim=-1)
+                
+                return features
         
+        if int_to_cano:
+            interpolated_features = torch.zeros(self.batch_size, voxels_coo.size(1), features.size(1)//self.mapping_dim).to(features.device)
+            if not rgb:
+                if self.mapping_dim == features.shape[1]:
+                    x_int = ((canonical_voxels_coo[..., 0]+1)/2 * (features.shape[3]-1)).long()
+                    y_int = ((canonical_voxels_coo[..., 1]+1)/2 * (features.shape[2]-1)).long()
+                    z_int = ((canonical_voxels_coo[..., 2]+1)/2 * (self.mapping_dim-1)).long()
+                    interpolated_features = features[torch.arange(features.shape[0]).unsqueeze(1), z_int, y_int, x_int].unsqueeze(-1)
+                else:
+                    print("Error: the mapping dimension is not equal to the feature dimension")
+            if rgb:
+                if self.mapping_dim*3 == features.shape[1]:
+                    x_int = ((canonical_voxels_coo[..., 0]+1)/2 * (features.shape[3]-1)).long()
+                    y_int = ((canonical_voxels_coo[..., 1]+1)/2 * (features.shape[2]-1)).long()
+                    z_int = ((canonical_voxels_coo[..., 2]+1)/2 * (self.mapping_dim-1)).long()
+                    r = features[torch.arange(features.shape[0]).unsqueeze(1), z_int, y_int, x_int]
+                    g = features[torch.arange(features.shape[0]).unsqueeze(1), z_int+self.mapping_dim, y_int, x_int]
+                    b = features[torch.arange(features.shape[0]).unsqueeze(1), z_int+self.mapping_dim*2, y_int, x_int]
+                    interpolated_features = torch.stack((r, g, b), dim=-1)
+                else:
+                    print("Error: the mapping dimension is not equal to the feature dimension")
+
         return interpolated_features
     
     def voxel_mapping(self, matrix_mapping):
@@ -1034,13 +1089,13 @@ class UnaGenModel(nn.Module):
         if batch:
             verts_deformed = torch.zeros(self.batch_size, points_coo.shape[1], points_coo.shape[2]).cuda().float()
             for i, gen in enumerate(gender):   # Each frame in the batch needs to have the skinning weights loaded separately
-                deformer = SMPLDeformer(betas=betas[i], gender=gen)
+                deformer = SMPLDeformer(betas=betas[i], gender=gen, K=7)
                 weights = deformer.query_weights(points_coo[i])
                 verts_deformed[i] = skinning(points_coo[i].unsqueeze(0), weights, smpl_tfs[i]).data[0]
         else:
             verts_deformed = torch.zeros(self.batch_size, points_coo.shape[0], points_coo.shape[1]).cuda().float()
             for i, gen in enumerate(gender):   # Each frame in the batch needs to have the skinning weights loaded separately
-                deformer = SMPLDeformer(betas=betas[i], gender=gen)
+                deformer = SMPLDeformer(betas=betas[i], gender=gen, K=7)
                 weights = deformer.query_weights(points_coo)
                 verts_deformed[i] = skinning(points_coo.unsqueeze(0), weights, smpl_tfs[i]).data[0]
         return verts_deformed
@@ -1065,18 +1120,20 @@ class UnaGenModel(nn.Module):
             occupied_voxels_ov = occupancy_field * occupancy_map   # Non occupied voxels have their opacity set to 0
         else:
             occupied_voxels_ov = occupancy_field
+
+        occupied_voxels_world_coo = occupied_voxels_coo   # Transformed before 
+        occupied_voxels_uv, exceeded_width_indices, exceeded_height_indices = get_uv(occupied_voxels_world_coo, self.cam_loc, self.intrinsics, self.pose)
+        occupied_voxels_ov[exceeded_width_indices] = 0
+        occupied_voxels_ov[exceeded_height_indices] = 0
+        
         if self.opt['suppress_voxels_rgb']:
             occupied_voxels_rgb = rgb_field * occupancy_map   # Also the rgb values of the non occupied voxels are set to 0
         else:
-            occupied_voxels_rgb = rgb_field
-
-        occupied_voxels_world_coo = occupied_voxels_coo
-        occupied_voxels_uv = get_uv(occupied_voxels_world_coo, self.cam_loc, self.intrinsics, self.pose).detach()
+            occupied_voxels_rgb = rgb_field        
         
         if self.visualize_stats:
             with torch.no_grad():
                 self.visualize_voxels((occupied_voxels_coo * occupancy_map)[0], output_file='occupied_voxels.png', world=True)
-                print("occupancy_map[0].shape:", occupancy_map[0].shape)
                 try:
                     occupied_canonical_voxels = occupancy_map[0].view(self.matrix_mapping.shape)
                     occupied_canonical_voxels_coo = self.voxel_mapping(occupied_canonical_voxels)
@@ -1086,15 +1143,23 @@ class UnaGenModel(nn.Module):
 
         # Voxel splatting ----
         if self.opt['voxel_splatting']:
-            original_rgb_values = torch.zeros(self.batch_size, occupied_voxels_coo.shape[1], 3, device=original_image.device)
+            original_rgb_values = torch.zeros(self.batch_size, occupied_voxels_coo.shape[1], 3, device=original_image.device, requires_grad=False)
             rendered_rgb_values = torch.zeros(self.batch_size, occupied_voxels_coo.shape[1], 3, device=original_image.device)
             
             # Convert to long and get fractional part
             x_int, y_int = occupied_voxels_uv[..., 0].long(), occupied_voxels_uv[..., 1].long()
             x_frac, y_frac = occupied_voxels_uv[..., 0] - x_int.float(), occupied_voxels_uv[..., 1] - y_int.float()
 
-            batch_idx = torch.arange(self.batch_size).unsqueeze(1).to(y_int.device)   # This is performed with advance dindexing to make it much faster
-                                                                                    # We need to check if this is correct
+            batch_idx = torch.arange(self.batch_size).unsqueeze(1).to(y_int.device)  
+
+            # -----------
+            test_image = torch.zeros_like(original_image).cuda()
+            test_image[batch_idx, :, y_int[0], x_int[0]] = torch.ones(3).cuda()
+            wandb.log({"Test image": [wandb.Image(test_image[0].detach().cpu().numpy().transpose(1, 2, 0))]})
+            wandb.log({"Original image": [wandb.Image(original_image[0].detach().cpu().numpy().transpose(1, 2, 0))]})
+            save_image(test_image, 'outputs/stats/test_image.png')
+            # -----------
+
             # Get the neighboring pixels
             top_left = original_image[batch_idx, :, y_int, x_int]
             top_right = original_image[batch_idx, :, y_int, torch.clamp(x_int + 1, 0, width - 1)]
@@ -1108,24 +1173,42 @@ class UnaGenModel(nn.Module):
                                 bottom_right * (y_frac * x_frac).unsqueeze(-1).repeat(1,1,3))
 
             # Compute depth
-            depth = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
+            eps = 1e-6
+            depth = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1).unsqueeze(-1)
             depth = (depth - depth.min(dim=1, keepdim=True)[0]) / (depth.max(dim=1, keepdim=True)[0] - depth.min(dim=1, keepdim=True)[0])
+
+            weights = torch.exp(2*occupied_voxels_ov) * torch.exp(1 - depth) / (torch.exp(1 - occupied_voxels_ov) + eps)
+            #weights = (occupied_voxels_ov**2) * (1 - depth) / ((1 - occupied_voxels_ov)**2)
+            weights = weights / (torch.sum(weights, dim=1, keepdim=True)[0] + eps)
+            weights = (weights - weights.min(dim=1, keepdim=True)[0]) / (weights.max(dim=1, keepdim=True)[0] - weights.min(dim=1, keepdim=True)[0] + eps)
+            
+            weights_0 = weights[0, :10].detach().view(10, -1).cpu().numpy()
+            wandb.log({"weights for first 10 rays histogram:": wandb.Histogram(weights_0)})
 
             # Compute rendered_rgb_values
             if self.opt['render_with_ov']:
                 rendered_rgb_values = occupied_voxels_ov * occupied_voxels_rgb  
+                #rendered_rgb_values = occupied_voxels_ov * (occupied_voxels_rgb.clone().detach())  
             else:
                 rendered_rgb_values = occupied_voxels_rgb 
-            rendered_rgb_values = rendered_rgb_values + (original_rgb_values - rendered_rgb_values) * (((1 - occupied_voxels_ov) * depth.unsqueeze(-1)))   # Correction term for further voxels
-            print("rendered_rgb_values min:", rendered_rgb_values.min())
-            print("rendered_rgb_values max:", rendered_rgb_values.max())
-            print("original_rgb_values min:", original_rgb_values.min())
-            print("original_rgb_values max:", original_rgb_values.max())
+            #original_rgb_values = original_rgb_values * occupancy_map.clone().detach()   # Suppress rgb values corresponding to non occupied voxels
+            #original_rgb_values = original_rgb_values + (rendered_rgb_values.clone().detach() - original_rgb_values) * (1 - weights.clone().detach())   # Correction term for further voxels
+        # ----------
+            '''
+            original_rgb_values_add = torch.zeros(self.batch_size, occupied_voxels_coo.shape[1], 3, device=original_image.device)
+            rendered_rgb_values_add = torch.zeros(self.batch_size, occupied_voxels_coo.shape[1], 3, device=original_image.device)
+
+            original_rgb_values_add = original_rgb_values
+            rendered_rgb_values_add = weights * original_rgb_values
+
+            rendered_rgb_values = torch.cat((rendered_rgb_values, rendered_rgb_values_add), dim=1)
+            original_rgb_values = torch.cat((original_rgb_values, original_rgb_values_add), dim=1)
+            '''
         # ----------
         # Add randomly sampled rays to enforce constistency
         if self.opt['n_training_rays'] > 0:
             n_rays = self.opt['n_training_rays']
-            original_rgb_values_add = torch.zeros(self.batch_size, n_rays, 3, device=original_image.device)
+            original_rgb_values_add = torch.zeros(self.batch_size, n_rays, 3, device=original_image.device, requires_grad=False)
             rendered_rgb_values_add = torch.zeros(self.batch_size, n_rays, 3, device=original_image.device)
 
             if self.opt['train_on_non_black']:
@@ -1175,7 +1258,7 @@ class UnaGenModel(nn.Module):
 
             cluster_center = torch.tensor([0, 0, 0]).unsqueeze(0).unsqueeze(1).repeat(self.batch_size, 1, 1).cuda()
             cluster_center = self.norm_to_world_coo(cluster_center, self.cam_loc, self.fov_bounds).detach()
-            cluster_center_uv = get_uv(cluster_center, self.cam_loc, self.intrinsics, self.pose).detach()
+            cluster_center_uv, _, _ = get_uv(cluster_center, self.cam_loc, self.intrinsics, self.pose)
             ax.scatter(cluster_center[0, 0, 0].cpu().numpy(), cluster_center[0, 0, 1].cpu().numpy(), cluster_center[0, 0, 2].cpu().numpy(), color='red', linewidth=2)
 
             for i in range(min(16, test_0.shape[0])):
@@ -1199,55 +1282,22 @@ class UnaGenModel(nn.Module):
             ax.set_xlabel('X')
             ax.set_ylabel('Y')
             ax.set_zlabel('Z')
-            plt.savefig('outputs/stats/rays.png')
+            wandb.log({"Rays": [wandb.Image(fig)]})
             plt.close()
             # ------------------------------
             # Expand dimensions for broadcasting
             selected_indices_exp = selected_indices.unsqueeze(2)   # (batch, n_rays, 1, 2)
             occupied_voxels_uv_exp = occupied_voxels_uv.unsqueeze(1)   # (batch, 1, n_voxels, 2)  
-            if self.opt['nearest_voxels'] > 0:   # Al momento credo non funzione nel modo giusto
-                # Calculate Euclidean distance
-                distances = torch.norm(selected_indices_exp - occupied_voxels_uv_exp, dim=-1)   # (batch, n_rays, n_voxels)
-
-                # Find indices of 8 smallest distances
-                nearest_voxels = self.opt['nearest_voxels']
-                closest_voxel_distances, closest_voxel_indices = distances.topk(nearest_voxels, dim=-1, largest=False)   # (batch, n_rays, k_neigh)
-                print("closest_voxel_distances min:", closest_voxel_distances.min())
-                print("closest_voxel_distances max:", closest_voxel_distances.max())
-                min_vals, _ = torch.min(closest_voxel_distances, dim=-1, keepdim=True)
-                max_vals, _ = torch.max(closest_voxel_distances, dim=-1, keepdim=True)
-                eps = 1e-6
-                closest_voxel_distances = ((closest_voxel_distances - min_vals) / (max_vals - min_vals + eps)).unsqueeze(-1)   # (batch, n_rays, k_neigh, 1)
-                print("closest_voxel_distances.shape:", closest_voxel_distances.shape)
-                print("closest_voxel_indices.shape:", closest_voxel_indices.shape)
-                # Get the corresponding rgb values
-                # Prepare indices for batch dimension
-                batch_indices = torch.arange(self.batch_size, device=original_image.device).view(-1, 1, 1)
-
-                # Use advanced indexing to select voxels
-                occupied_voxels_ov_selected = occupied_voxels_ov[batch_indices, closest_voxel_indices]
-                occupied_voxels_rgb_selected = occupied_voxels_rgb[batch_indices, closest_voxel_indices]
-
-                # Calculate depth
-                depth_all = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
-                depth_all = (depth_all - depth_all.min()) / (depth_all.max() - depth_all.min())
-
-                # Select the depths for the closest voxels
-                depth = depth_all[batch_indices, closest_voxel_indices]  
-
-                # Apply the formula
-                if self.opt['render_with_ov']:
-                    rendered_rgb_values_add = torch.sum(occupied_voxels_ov_selected * occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth.unsqueeze(-1)), dim=2) / (torch.sum(occupied_voxels_ov_selected, dim=2) + torch.sum((1 - depth.unsqueeze(-1)), dim=2) + torch.sum((1 - closest_voxel_distances), dim=2))
-                else:
-                    rendered_rgb_values_add = torch.sum(occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth.unsqueeze(-1)), dim=2) / (torch.sum((1 - depth.unsqueeze(-1)), dim=2) + torch.sum(closest_voxel_distances, dim=2))
-            elif self.opt['nearest_voxels'] == -1:
+            if self.opt['nearest_voxels'] == -1:
                 # Calculate Euclidean distance
                 distances = torch.norm(selected_indices_exp - occupied_voxels_uv_exp, dim=-1).unsqueeze(-1)   # (batch, n_rays, n_voxels)
 
                 # Create a mask for distances less than the threshold
                 threshold = self.opt['closeness_threshold']
                 mask = (distances < threshold)
-                print("number of close voxels:", torch.sum(mask, dim=2).max())
+                close_voxels_number = torch.sum(mask, dim=2, keepdim=True)
+                close_voxels_number_0 = close_voxels_number[0].detach().cpu().numpy()
+                wandb.log({"Number of close voxels histogram:": wandb.Histogram(close_voxels_number_0)})
 
                 # Apply the mask to get the distances and indices of the voxels within the threshold
                 distances = distances / threshold 
@@ -1262,16 +1312,10 @@ class UnaGenModel(nn.Module):
                 occupied_voxels_rgb_expanded = occupied_voxels_rgb.unsqueeze(1).expand(-1, mask.shape[1], -1, -1)   # RGB 0 for far voxels
 
                 # Apply the mask to the tensors
-                print("mask min:", mask.min())
-                print("mask max:", mask.max())
-                print("occupied_voxels_ov_expanded max:", occupied_voxels_ov_expanded[0].max())
-                print("occupied_voxels_rgb_expanded max:", occupied_voxels_rgb_expanded[0].max())
                 occupied_voxels_ov_selected = torch.where(mask, occupied_voxels_ov_expanded, torch.zeros_like(occupied_voxels_ov_expanded))   # Put ones for the formula, it nullifies non considered voxels' contributes
                 occupied_voxels_rgb_selected = torch.where(mask, occupied_voxels_rgb_expanded, torch.zeros_like(occupied_voxels_rgb_expanded))
                 #occupied_voxels_ov_selected = occupied_voxels_ov_expanded * mask
                 #occupied_voxels_rgb_selected = occupied_voxels_rgb_expanded * mask
-                print("occupied_voxels_ov_selected max:", occupied_voxels_ov_selected[0].max())
-                print("occupied_voxels_ov_selected max:", occupied_voxels_rgb_selected[0].max())
 
                 eps = 1e-6
                 depth_all = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
@@ -1280,27 +1324,26 @@ class UnaGenModel(nn.Module):
                 depth = torch.where(mask, depth_all, torch.zeros_like(depth_all))   # far voxels are suppress to normalize
                 depth = (depth - depth.min(dim=2, keepdim=True)[0]) / (depth.max(dim=2, keepdim=True)[0] - depth.min(dim=2, keepdim=True)[0] + eps)
                 depth = torch.where(mask, depth, torch.ones_like(depth))   # far voxels have distance 1
-                print("torch.sum((1 - depth), dim=2) min:", torch.sum((1 - depth), dim=2).min())
-                print("torch.sum((1 - depth), dim=2) max:", torch.sum((1 - depth), dim=2).max())
 
-                print("occupied_voxels_rgb_selected shape:", occupied_voxels_rgb_selected.shape)
+                weights = torch.exp(occupied_voxels_ov_selected) * torch.exp(1 - depth)
+                #weights = (occupied_voxels_ov_selected**2) * (1 - depth) / ((1 - occupied_voxels_ov_selected)**2)
+                weights = weights / (torch.sum(torch.where(mask, weights, torch.zeros_like(weights)), dim=2, keepdim=True)[0] + eps)
+                weights = (1 + weights - weights.min(dim=2, keepdim=True)[0]) / (1 + weights.max(dim=2, keepdim=True)[0] - weights.min(dim=2, keepdim=True)[0] + eps)
+                weights_0 = weights[0, :10].detach().view(10, -1).cpu().numpy()
+                wandb.log({"weights for first 10 rays histogram:": wandb.Histogram(weights_0)})
+
                 eps = 1e-6
                 # Compute rendered_rgb_values_add
                 if self.opt['render_with_ov']:
                     exp = 1
-                    rendered_rgb_values_add = torch.sum(occupied_voxels_ov_selected * occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp) * ((1 - depth)**exp), dim=2) / (torch.sum((1 - depth)**exp, dim=2) + torch.sum((1 - closest_voxel_distances)**exp, dim=2) + eps)
-                    #rendered_rgb_values_add = torch.sum(occupied_voxels_ov_selected * occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth), dim=2) / (torch.sum(occupied_voxels_ov_selected, dim=2) + torch.sum((1 - depth), dim=2) + torch.sum((1 - closest_voxel_distances), dim=2) + eps)
+                    #rendered_rgb_values_add = torch.sum(occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp), dim=2) / (torch.sum((1 - closest_voxel_distances)**exp, dim=2) + eps)
+                    rendered_rgb_values_add = torch.sum(weights * occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp), dim=2) / (torch.sum(weights, dim=2) + torch.sum((1 - closest_voxel_distances)**exp, dim=2) + eps)
                 else:
                     rendered_rgb_values_add = torch.sum(occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp) * ((1 - depth)**exp), dim=2) / (torch.sum((1 - depth)**exp, dim=2) + torch.sum((1-closest_voxel_distances)**exp, dim=2) + eps)
 
             u, v = selected_indices[..., 0], selected_indices[..., 1]
             batch_idx = torch.arange(self.batch_size).unsqueeze(1).to(dynamical_voxels_coo.device)
             original_rgb_values_add = original_image[batch_idx, :, v, u]
-
-            print("rendered_rgb_values_add min:", rendered_rgb_values_add.min())
-            print("rendered_rgb_values_add max:", rendered_rgb_values_add.max())
-            print("original_rgb_values_add min:", original_rgb_values_add.min())
-            print("original_rgb_values_add max:", original_rgb_values_add.max())
             
             # Concatenate along the second dimension
             if self.opt['voxel_splatting']:
@@ -1330,18 +1373,25 @@ class UnaGenModel(nn.Module):
         if self.visualize_stats:
             with torch.no_grad():
                 rgb_values_differences = original_rgb_values - rendered_rgb_values
-                original_values = original_rgb_values.view(self.batch_size, 3, 4, -1)
-                rendered_values = rendered_rgb_values.view(self.batch_size, 3, 4, -1)
-                differences_values = rgb_values_differences.view(self.batch_size, 3, 4, -1)
+                strings_height = 64
+                try:
+                    original_values = original_rgb_values.view(self.batch_size, 3, strings_height, -1)
+                    rendered_values = rendered_rgb_values.view(self.batch_size, 3, strings_height, -1)
+                    differences_values = rgb_values_differences.view(self.batch_size, 3, strings_height, -1)
+                except:
+                    original_values = original_rgb_values.view(self.batch_size, 3, 1, -1)
+                    rendered_values = rendered_rgb_values.view(self.batch_size, 3, 1, -1)
+                    differences_values = rgb_values_differences.view(self.batch_size, 3, 1, -1)
                 images = torch.cat((original_values[:, :, :, :], rendered_values[:, :, :, :], differences_values[:, :, :, :]))
                 grid = make_grid(images, nrow=self.batch_size)  # Arrange the images in a 3xbtach_size grid
-                save_image(grid, 'outputs/stats/original_vs_rendered_rgb_values.png')
+                wandb.log({'original_vs_rendered_rgb_values': [wandb.Image(grid)]})
                 
         return original_rgb_values, rendered_rgb_values
     
     def render_image(self, dynamical_voxels_coo, occupancy_field, rgb_field,  original_image):
         '''Render image from occupancy field and rgb field.'''
         height, width = original_image.shape[2:]
+        # n_training_rays = torch.tensor(self.n_training_rays).cuda()
 
         occupancy_map = (occupancy_field > self.occupancy_threshold).float() 
         if torch.count_nonzero(occupancy_map)==0:
@@ -1351,15 +1401,20 @@ class UnaGenModel(nn.Module):
             occupied_voxels_coo = dynamical_voxels_coo * occupancy_map
         else:
             occupied_voxels_coo = dynamical_voxels_coo
-        #occupied_voxels_ov = occupancy_field * occupancy_map   # Non occupied voxels have their opacity set to 0
-        occupied_voxels_ov = occupancy_field
+        if self.opt['suppress_voxels_ov']:
+            occupied_voxels_ov = occupancy_field * occupancy_map   # Non occupied voxels have their opacity set to 0
+        else:
+            occupied_voxels_ov = occupancy_field
+
+        occupied_voxels_world_coo = occupied_voxels_coo
+        occupied_voxels_uv, exceeded_width_indices, exceeded_height_indices = get_uv(occupied_voxels_world_coo, self.cam_loc, self.intrinsics, self.pose)
+        occupied_voxels_ov[exceeded_width_indices] = 0
+        occupied_voxels_ov[exceeded_height_indices] = 0
+        
         if self.opt['suppress_voxels_rgb']:
             occupied_voxels_rgb = rgb_field * occupancy_map   # Also the rgb values of the non occupied voxels are set to 0
         else:
             occupied_voxels_rgb = rgb_field
-
-        occupied_voxels_world_coo = occupied_voxels_coo
-        occupied_voxels_uv = get_uv(occupied_voxels_world_coo, self.cam_loc, self.intrinsics, self.pose).detach()
         
         n_rays = height*width
         rendered_rgb_values = torch.zeros(self.batch_size, n_rays, 3, device=original_image.device)
@@ -1369,6 +1424,8 @@ class UnaGenModel(nn.Module):
         y_indices = y_indices.flatten().to(device='cuda')
         x_indices = x_indices.flatten().to(device='cuda')
         pixel_indices = torch.stack((x_indices, y_indices), dim=-1).unsqueeze(0).repeat(self.batch_size, 1, 1)
+        print(f'Pixel indices shape: {pixel_indices.shape}')
+        print("Pixel indices:", pixel_indices[0, :1920])
         
         n_patches = 1000
         n_pixels = n_rays // n_patches
@@ -1378,42 +1435,7 @@ class UnaGenModel(nn.Module):
 
             selected_indices_exp = selected_indices.unsqueeze(2)   # (batch, n_rays, 1, 2)
             occupied_voxels_uv_exp = occupied_voxels_uv.unsqueeze(1)   # (batch, 1, n_voxels, 2)  
-            if self.opt['nearest_voxels'] > 0:   # Al momento credo non funzione nel modo giusto
-                # Calculate Euclidean distance
-                distances = torch.norm(selected_indices_exp - occupied_voxels_uv_exp, dim=-1)   # (batch, n_rays, n_voxels)
-
-                # Find indices of 8 smallest distances
-                nearest_voxels = self.opt['nearest_voxels']
-                closest_voxel_distances, closest_voxel_indices = distances.topk(nearest_voxels, dim=-1, largest=False)   # (batch, n_rays, k_neigh)
-                print("closest_voxel_distances min:", closest_voxel_distances.min())
-                print("closest_voxel_distances max:", closest_voxel_distances.max())
-                min_vals, _ = torch.min(closest_voxel_distances, dim=-1, keepdim=True)
-                max_vals, _ = torch.max(closest_voxel_distances, dim=-1, keepdim=True)
-                eps = 1e-6
-                closest_voxel_distances = ((closest_voxel_distances - min_vals) / (max_vals - min_vals + eps)).unsqueeze(-1)   # (batch, n_rays, k_neigh, 1)
-                print("closest_voxel_distances.shape:", closest_voxel_distances.shape)
-                print("closest_voxel_indices.shape:", closest_voxel_indices.shape)
-                # Get the corresponding rgb values
-                # Prepare indices for batch dimension
-                batch_indices = torch.arange(self.batch_size, device=original_image.device).view(-1, 1, 1)
-
-                # Use advanced indexing to select voxels
-                occupied_voxels_ov_selected = occupied_voxels_ov[batch_indices, closest_voxel_indices]
-                occupied_voxels_rgb_selected = occupied_voxels_rgb[batch_indices, closest_voxel_indices]
-
-                # Calculate depth
-                depth_all = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
-                depth_all = (depth_all - depth_all.min()) / (depth_all.max() - depth_all.min())
-
-                # Select the depths for the closest voxels
-                depth = depth_all[batch_indices, closest_voxel_indices]  
-
-                # Apply the formula
-                if self.opt['render_with_ov']:
-                    rendered_rgb_values = torch.sum(occupied_voxels_ov_selected * occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth.unsqueeze(-1)), dim=2) / (torch.sum(occupied_voxels_ov_selected, dim=2) + torch.sum((1 - depth.unsqueeze(-1)), dim=2) + torch.sum((1 - closest_voxel_distances), dim=2))
-                else:
-                    rendered_rgb_values = torch.sum(occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth.unsqueeze(-1)), dim=2) / (torch.sum((1 - depth.unsqueeze(-1)), dim=2) + torch.sum(closest_voxel_distances, dim=2))
-            elif self.opt['nearest_voxels'] == -1:
+            if self.opt['render_with_rays']:   
                 # Calculate Euclidean distance
                 distances = torch.norm(selected_indices_exp - occupied_voxels_uv_exp, dim=-1).unsqueeze(-1)   # (batch, n_rays, n_voxels)
 
@@ -1422,32 +1444,50 @@ class UnaGenModel(nn.Module):
                 mask = (distances < threshold)
 
                 # Apply the mask to get the distances and indices of the voxels within the threshold
+                distances = distances / threshold 
                 closest_voxel_distances = torch.where(mask, distances, torch.ones_like(distances))   # far voxels have distance 1
-                min_vals, _ = torch.min(closest_voxel_distances, dim=2, keepdim=True)
-                max_vals, _ = torch.max(closest_voxel_distances, dim=2, keepdim=True)
-                eps = 1e-6
-                closest_voxel_distances = ((closest_voxel_distances - min_vals) / (max_vals - min_vals + eps))
+                #min_vals, _ = torch.min(closest_voxel_distances, dim=-1, keepdim=True)
+                #max_vals, _ = torch.max(closest_voxel_distances, dim=-1, keepdim=True)
+                #eps = 1e-6
+                #closest_voxel_distances = ((closest_voxel_distances - min_vals) / (max_vals - min_vals + eps))
 
                 # Expand occupied_voxels_ov to match the shape of mask
                 occupied_voxels_ov_expanded = occupied_voxels_ov.unsqueeze(1).expand(-1, mask.shape[1], -1, -1)   # Opacity 0 for far voxels
                 occupied_voxels_rgb_expanded = occupied_voxels_rgb.unsqueeze(1).expand(-1, mask.shape[1], -1, -1)   # RGB 0 for far voxels
 
                 # Apply the mask to the tensors
-                occupied_voxels_ov_selected = occupied_voxels_ov_expanded * mask
-                occupied_voxels_rgb_selected = occupied_voxels_rgb_expanded * mask
+                occupied_voxels_ov_selected = torch.where(mask, occupied_voxels_ov_expanded, torch.zeros_like(occupied_voxels_ov_expanded))   # Put ones for the formula, it nullifies non considered voxels' contributes
+                occupied_voxels_rgb_selected = torch.where(mask, occupied_voxels_rgb_expanded, torch.zeros_like(occupied_voxels_rgb_expanded))
+                #occupied_voxels_ov_selected = occupied_voxels_ov_expanded * mask
+                #occupied_voxels_rgb_selected = occupied_voxels_rgb_expanded * mask
 
+                eps = 1e-6
                 depth_all = torch.norm(occupied_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
                 depth_all = (depth_all - depth_all.min(dim=1, keepdim=True)[0]) / (depth_all.max(dim=1, keepdim=True)[0] - depth_all.min(dim=1, keepdim=True)[0])
                 depth_all = depth_all.unsqueeze(1).unsqueeze(-1).expand_as(mask)
-                depth = torch.where(mask, depth_all, torch.ones_like(depth_all))   # far voxels have distance 1
+                depth = torch.where(mask, depth_all, torch.zeros_like(depth_all))   # far voxels are suppress to normalize
+                depth = (depth - depth.min(dim=2, keepdim=True)[0]) / (depth.max(dim=2, keepdim=True)[0] - depth.min(dim=2, keepdim=True)[0] + eps)
+                depth = torch.where(mask, depth, torch.ones_like(depth))   # far voxels have distance 1
 
+                weights = torch.exp(occupied_voxels_ov_selected) * torch.exp(1 - depth)
+                #weights = (occupied_voxels_ov_selected**2) * (1 - depth) / ((1 - occupied_voxels_ov_selected)**2)
+                weights = weights / (torch.sum(torch.where(mask, weights, torch.zeros_like(weights)), dim=2, keepdim=True)[0] + eps)
+                weights = (weights - weights.min(dim=2, keepdim=True)[0]) / (weights.max(dim=2, keepdim=True)[0] - weights.min(dim=2, keepdim=True)[0] + eps)
+                weights_0 = weights[0, :10].detach().view(10, -1).cpu().numpy()
+                wandb.log({"weights for first 10 rays histogram:": wandb.Histogram(weights_0)})
+
+                eps = 1e-6
                 # Compute rendered_rgb_values_add
                 if self.opt['render_with_ov']:
-                    rendered_rgb_values[:, i*n_pixels:(i+1)*n_pixels, :] = torch.sum(occupied_voxels_ov_selected * occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth), dim=2) / (torch.sum((1 - depth), dim=2) + torch.sum((1 - closest_voxel_distances), dim=2))
+                    exp = 1
+                    rendered_rgb_values[:, i*n_pixels:(i+1)*n_pixels, :] = torch.sum(weights * occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp), dim=2) / (torch.sum(weights, dim=2) + torch.sum((1 - closest_voxel_distances)**exp, dim=2) + eps)
+                    #rendered_rgb_values_add = torch.sum(occupied_voxels_ov_selected * occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth), dim=2) / (torch.sum(occupied_voxels_ov_selected, dim=2) + torch.sum((1 - depth), dim=2) + torch.sum((1 - closest_voxel_distances), dim=2) + eps)
                 else:
-                    rendered_rgb_values[:, i*n_pixels:(i+1)*n_pixels, :] = torch.sum(occupied_voxels_rgb_selected * (1 - closest_voxel_distances) * (1 - depth), dim=2) / (torch.sum((1 - depth), dim=2) + torch.sum(closest_voxel_distances, dim=2))
+                    rendered_rgb_values[:, i*n_pixels:(i+1)*n_pixels, :] = torch.sum(occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp) * ((1 - depth)**exp), dim=2) / (torch.sum((1 - depth)**exp, dim=2) + torch.sum((1-closest_voxel_distances)**exp, dim=2) + eps)
 
-        return rendered_rgb_values
+        rendered_image = rendered_rgb_values.view(self.batch_size, 3, height, width)
+
+        return rendered_image
     
     def weights_init(self, m):
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):

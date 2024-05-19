@@ -148,8 +148,10 @@ def get_uv(world_coords, cam_loc, intrinsics, pose):
 
     uv[..., 0] = torch.clamp(uv[..., 0], 0, 1080 - 1)
     uv[..., 1] = torch.clamp(uv[..., 1], 0, 1920 - 1)
+    exceeded_width_indices = torch.where(uv[..., 0] >= 1080)
+    exceeded_height_indices = torch.where(uv[..., 1] >= 1920)
 
-    return uv
+    return uv, exceeded_width_indices, exceeded_height_indices
 
 def project(x, y, z, intrinsics):
     '''Projects 3D points to the image plane.'''
