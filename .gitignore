@@ -2,5 +2,5 @@ data/*
 smpl/*
 supp_repos/*
 outputs/*
-outputs/*
 __pycache__/*
+wandb/*

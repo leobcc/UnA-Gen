@@ -1,10 +1,10 @@
 continue_training: False
 
-learning_rate: 0.01
+learning_rate: 0.0001
 num_epochs: 1000
-batch_size: 4
+batch_size: 1
 frame_skip: 100
-shuffle: False
+shuffle: True
 num_workers: 0
 
 model: 
@@ -15,42 +15,46 @@ model:
     name: "dpt"   # "unet", "dpt"
     size: "vitl"   # "vits", "vitb" or "vitl"
     train: False
-    decouple: False
+    decouple: False   # Useful only if the encoder is trained
 
   decoder:
     name: "cnn"   # "cnn", "fc"
+    canonical: True   # The decoder is trained to predict canonical values
     train: True
+    occupancy_depth_dep: True   # At the moment works only with cnn
+    rgb_depth_dep: True   # At the moment works only with cnn
     view_dependent_rgb: True   # At the moment works only with cnn
 
-  smpl_transform: "world"   # "norm" or "world". Perform smpl transformation in normed space or world coordinates.
+  smpl_transform: "norm"   # "norm" or "world". Perform smpl transformation in normed space or world coordinates.
   learn_world_params: False
-  distribute_with_perspective: True   # I think this makes sense only if smpl_transform==world
-  standard_depth_n: 0   # This will have to be learnt
+  distribute_with_perspective: False   # I think this makes sense only if smpl_transform==world
+  standard_depth_n: 1   # This will have to be learnt
   standard_scale_z: 2   # This will have to be learnt
   standard_depth_f: 8   # Currently not used
-  mapping_dim: 16
+  mapping_dim: 28
   occupancy_threshold: 0.5
   relative_ov: False
   render_with_ov: True   # If not this, then should suppress rgb
   suppress_voxels_coo: False   # 0-mask the voxel coordinates with an occupancy_map
-  suppress_voxels_ov: True   # 0-mask the voxel occupancy values with an occupancy_map
+  suppress_voxels_ov: False   # 0-mask the voxel occupancy values with an occupancy_map
   suppress_voxels_rgb: False   # 0-mask the voxel rgb values with an occupancy_map
   # Voxel splatting for training
   voxel_splatting: True   # Trains on values rendered by projecting voxels
   #----------------------
   # Ray cast for training
-  train_on_non_black: False   # Train only on non-black pixels
+  train_on_non_black: True   # Train only on non-black pixels
   n_training_rays: 4096   # Put 0 to disable training rays
   nearest_voxels: -1   # Put -1 to use voxels closer than threshold
   closeness_threshold: 10   # Pixel distance
   #----------------------
   render_full_image: True
   render_full_image_every_n_epochs: 100
+  render_with_rays: True
   depth_refinement: False
   refinement_epochs: 100
 
 loss:
   binary_cross_entropy: False
-  binary_cross_entropy_weight: 0.01
-  occupancy_loss: False
+  binary_cross_entropy_weight: 0.1
+  occupancy_loss: False   # TODO: remove this and test new weights
   occupancy_loss_weight: 0.01
