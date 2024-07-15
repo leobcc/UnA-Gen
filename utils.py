@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from scipy.spatial.transform import Rotation as R
 import trimesh
 import torch.nn.functional as F
 
@@ -63,37 +64,14 @@ def coordinates_projection_map(intrinsics, points_3d=None, points_2d=None):
     else:
         raise ValueError("Either points_3d or points_2d must be provided.")
     
-def get_boundaries(image, intrinsics, pose):
+def get_cam(pose):
     '''Returns the 4 boundary points corresponding to the xy boundaries of the dynamical space.'''
     if pose.shape[1] == 7: #In case of quaternion vector representation
         cam_loc = pose[:, 4:]
-        R = quat_to_rot(pose[:,:4])
-        p = torch.eye(4).repeat(pose.shape[0],1,1).cuda().float()
-        p[:, :3, :3] = R
-        p[:, :3, 3] = cam_loc
     else: # In case of pose matrix representation
         cam_loc = pose[:, :3, 3]
-        p = pose
 
-    uv = torch.tensor([[0, 0], [0, image.shape[2]], [image.shape[3], 0], [image.shape[3], image.shape[2]]]).cuda().float()
-    uv = uv.unsqueeze(0).repeat(pose.shape[0], 1, 1)
-    batch_size, num_samples, _ = uv.shape
-
-    depth = torch.ones((batch_size, num_samples)).cuda()
-    x_cam = uv[:, :, 0].view(batch_size, -1)
-    y_cam = uv[:, :, 1].view(batch_size, -1)
-    z_cam = depth.view(batch_size, -1)
-
-    pixel_points_cam = lift(x_cam, y_cam, z_cam, intrinsics=intrinsics)
-
-    # permute for batch matrix product
-    pixel_points_cam = pixel_points_cam.permute(0, 2, 1)
-
-    world_coords = torch.bmm(p, pixel_points_cam).permute(0, 2, 1)[:, :, :3]
-    ray_dirs = world_coords - cam_loc[:, None, :]
-    ray_dirs = F.normalize(ray_dirs, dim=2)
-
-    return ray_dirs, cam_loc
+    return cam_loc
 
 def get_rays(uv, intrinsics, pose):
     '''Returns the normalized rays of the points with given uv cooridnates.'''
@@ -126,12 +104,22 @@ def get_rays(uv, intrinsics, pose):
 
     return ray_dirs, cam_loc
 
-def get_uv(world_coords, cam_loc, intrinsics, pose):
+def get_uv(world_coords, intrinsics, pose):
     '''Returns the uv coordinates corresponding to the given rays.'''
     world_coords = world_coords.permute(0, 2, 1)
     world_coords = torch.cat([world_coords, torch.ones((world_coords.shape[0], 1, world_coords.shape[2])).cuda()], dim=1)
 
     # Compute the camera coordinates
+    if pose.shape[1] == 7: #In case of quaternion vector representation
+        cam_loc = pose[:, 4:]
+        R = quat_to_rot(pose[:,:4])
+        p = torch.eye(4).repeat(pose.shape[0],1,1).cuda().float()
+        p[:, :3, :3] = R
+        p[:, :3, 3] = cam_loc
+    else: # In case of pose matrix representation
+        cam_loc = pose[:, :3, 3]
+        p = pose
+
     if pose.shape[1] == 7: # In case of quaternion vector representation
         R = quat_to_rot(pose[:,:4])
         p_inv = torch.eye(4).repeat(pose.shape[0],1,1).cuda().float()
@@ -146,12 +134,7 @@ def get_uv(world_coords, cam_loc, intrinsics, pose):
     # Project to the image plane
     uv = project(cam_coords[:, :, 0], cam_coords[:, :, 1], cam_coords[:, :, 2], intrinsics=intrinsics)
 
-    uv[..., 0] = torch.clamp(uv[..., 0], 0, 1080 - 1)
-    uv[..., 1] = torch.clamp(uv[..., 1], 0, 1920 - 1)
-    exceeded_width_indices = torch.where(uv[..., 0] >= 1080)
-    exceeded_height_indices = torch.where(uv[..., 1] >= 1920)
-
-    return uv, exceeded_width_indices, exceeded_height_indices
+    return uv
 
 def project(x, y, z, intrinsics):
     '''Projects 3D points to the image plane.'''
@@ -183,6 +166,64 @@ def lift(x, y, z, intrinsics):
 
     # homogeneous
     return torch.stack((x_lift, y_lift, z, torch.ones_like(z).cuda()), dim=-1)
+
+# --------------
+
+def axis_angle_to_rotation_matrix(axis_angle_batch):
+    """
+    Converts batched axis-angle representations to rotation matrices.
+    
+    Args:
+        axis_angle_batch (tensor): Batched axis-angle representation of shape [batch_size, 3].
+        
+    Returns:
+        rotation_matrix_batch (tensor): Batched rotation matrices of shape [batch_size, 3, 3].
+    """
+    batch_size = axis_angle_batch.size(0)
+    rotation_matrices = torch.zeros((batch_size, 3, 3), device=axis_angle_batch.device)
+
+    # Compute rotation matrices
+    for i in range(batch_size):
+        r = R.from_rotvec(axis_angle_batch[i].detach().cpu().numpy())  # Convert to rotation object
+        rotation_matrices[i] = torch.tensor(r.as_matrix(), device=axis_angle_batch.device)  # Convert to tensor
+    
+    return rotation_matrices
+
+def get_global_transformation(smpl_pose_batch, smpl_trans_batch, scale_batch):
+    """
+    Computes global transformation matrices and translations for batched SMPL pose and translation.
+    
+    Args:
+        smpl_pose_batch (tensor): Batched SMPL pose parameters of shape [batch_size, 72].
+        smpl_trans_batch (tensor): Batched SMPL translation vectors of shape [batch_size, 3].
+        scale_batch (tensor): Batched global scale factors of shape [batch_size, 1].
+    
+    Returns:
+        global_rotation_batch (tensor): Batched global rotation matrices of shape [batch_size, 3, 3].
+        global_translation_batch (tensor): Batched global translation vectors of shape [batch_size, 3].
+        global_scale_batch (tensor): Batched global scale factors of shape [batch_size, 1].
+    """
+    global_pose_batch = smpl_pose_batch[:, :3]  # The first 3 values are the global rotation in axis-angle
+    global_rotation_batch = axis_angle_to_rotation_matrix(global_pose_batch)  # Convert to rotation matrix
+    global_translation_batch = smpl_trans_batch  # Global translation vector
+    global_scale_batch = scale_batch  # Scale factor
+
+    return global_rotation_batch, global_translation_batch, global_scale_batch
+
+
+# --------------
+
+
+# Matrix refinement
+
+def upsample_matrix(matrix, scale_factor, threshold=0.5):
+    matrix = matrix.unsqueeze(0).unsqueeze(0)  # Add two dimensions for batch and channel
+    upsampled_matrix = F.interpolate(matrix, scale_factor=scale_factor, mode='trilinear', align_corners=False)
+    upsampled_matrix = upsampled_matrix.squeeze(0).squeeze(0)  # Remove the added dimensions
+
+    upsampled_matrix = (upsampled_matrix > threshold).float()
+
+    return upsampled_matrix
 
 
 # Unet parts
