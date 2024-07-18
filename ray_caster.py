@@ -15,7 +15,7 @@ import time
 # render_values_at_rays(dynamical_voxels_world_coo, occupancy_field, rgb_field, image, depth_image)
 
 class RayCaster:
-    def __init__(self, model, dynamical_voxels_world_coo, occupancy_field, rgb_field, image, depth_image=None, device='cuda'):
+    def __init__(self, model, dynamical_voxels_world_coo, occupancy_field, cum_of, rgb_field, image, depth_image=None, device='cuda'):
         self.opt = model.opt
         self.batch_size = model.batch_size
         self.mapping_dim = model.mapping_dim
@@ -38,6 +38,7 @@ class RayCaster:
 
         self.dynamical_voxels_world_coo = dynamical_voxels_world_coo.to(device)
         self.occupancy_field = occupancy_field.to(device)
+        self.cum_of = cum_of.to(device)
         self.rgb_field = rgb_field.to(device)
         self.image = image.to(device)
         self.depth_image = depth_image.to(device)
@@ -226,6 +227,7 @@ class RayCaster:
                             bottom_right * (y_frac * x_frac).unsqueeze(-1).repeat(1,1,3))
                     
         # Compute rendered_rgb_values
+        #occupancy_map = (voxels_ov > self.opt['occupancy_threshold']).float() * ((1 - self.cum_of) > 0).float()
         occupancy_map = (voxels_ov > self.opt['occupancy_threshold']).float() 
         rendered_rgb_values = voxels_rgb * occupancy_map.detach()
         #rendered_rgb_values = voxels_rgb
@@ -371,12 +373,21 @@ class RayCaster:
                     sorted_voxels_distances_selected = (sorted_voxels_distances_selected - sorted_voxels_distances_selected.min(dim=2, keepdim=True)[0]) / (sorted_voxels_distances_selected.max(dim=2, keepdim=True)[0] - sorted_voxels_distances_selected.min(dim=2, keepdim=True)[0] + eps)
                 sorted_voxels_distances_selected = (~sorted_mask) + sorted_voxels_distances_selected   # far voxels have distance 1
 
+                samples_distances = torch.cat([sorted_depth[:, :, 1:, :] - sorted_depth[:, :, :-1, :], torch.zeros(self.batch_size, n_rays, 1, 1, device=sorted_depth.device)], dim=2)
                 norm_dis = ((1 + sorted_depth) * (1 + sorted_voxels_distances_selected) - 1) / 3
                 #norm_dis = (norm_dis - norm_dis.min(dim=2, keepdim=True)[0]) / (norm_dis.max(dim=2, keepdim=True)[0] - norm_dis.min(dim=2, keepdim=True)[0] + eps)
                 w = sorted_occupied_voxels_ov_selected * (1 - norm_dis)
                 #w = sorted_occupied_voxels_ov_selected * (1 - sorted_depth)
                 cum_w = torch.cumsum(w, dim=2) - w
                 weights = torch.exp(-cum_w)*(1-torch.exp(-w))  
+                #weights = weights / (torch.sum(weights, dim=2, keepdim=True)+eps)
+
+                #wandb.log({"cum_of histogram:": wandb.Histogram(self.cum_of[0].detach().cpu().numpy())})
+                #wandb.log({"norm_dis histogram:": wandb.Histogram(norm_dis[0].detach().cpu().numpy())})
+
+                #sorted_cum_of = (self.cum_of.unsqueeze(1).repeat(1, n_rays, 1, 1)).gather(2, indices)
+                #weights = (1+(1 - (sorted_cum_of > 0.5).float())) * (1 + sorted_occupied_voxels_ov_selected) * (1+(1 - norm_dis)) * sorted_mask / 8
+                #weights = weights / (torch.sum(weights, dim=2, keepdim=True)+eps)
 
                 #w_s = torch.sum(weights, dim=2, keepdim=True)
                 #weights = weights + (1 - sorted_voxels_distances_selected)   # This is to give more importance to the voxels closer to the rays
@@ -409,6 +420,88 @@ class RayCaster:
                 
                 #rendered_rgb_values_rays = torch.sum(weights * sorted_occupied_voxels_rgb_selected * ((1 - sorted_closest_voxel_distances)**exp), dim=2) / (torch.sum((1 - sorted_closest_voxel_distances)**exp, dim=2) + eps)
                 rendered_rgb_values_rays = torch.sum(weights * sorted_occupied_voxels_rgb_selected, dim=2)
+
+            if self.opt['nearest_voxels'] == -2:   # This is when controlling canonical space
+                # Calculate Euclidean distance
+                distances = torch.norm(selected_indices_exp - occupied_voxels_uv_exp, dim=-1).unsqueeze(-1)   # (batch, n_rays, n_voxels)
+
+                # Create a mask for distances less than the threshold
+                if self.opt['closeness_threshold'] > 0:
+                    threshold = self.opt['closeness_threshold']
+                    mask = (distances < threshold)
+                elif self.opt['closeness_threshold'] < 0:   # k-nearest_neighbors
+                    k = -self.opt['closeness_threshold']
+                    _, indices = distances.topk(k, dim=2, largest=False, sorted=True)
+                    mask = torch.zeros_like(distances)
+                    mask = mask.scatter(2, indices, 1).bool()
+                if self.visualize_stats:
+                    close_voxels_number = torch.sum(mask, dim=2, keepdim=True)
+                    close_voxels_number_0 = close_voxels_number[0].detach().cpu().numpy()
+                    wandb.log({"Number of close voxels histogram:": wandb.Histogram(close_voxels_number_0)})
+
+                # Apply the mask to get the distances and indices of the voxels within the threshold
+                #distances = distances / threshold 
+
+                if self.visualize_stats:
+                    fig = plt.figure()
+                    mask_0_0 = mask[0, 0].detach().squeeze(-1).cpu().numpy()
+                    selected_voxels_uv = voxels_uv[0].detach().cpu().numpy()
+                    selected_voxels_uv = selected_voxels_uv[mask_0_0]
+                    plt.scatter(selected_voxels_uv[:, 0], selected_voxels_uv[:, 1], c='r', s=10)
+                    wandb.log({"Close voxels": [wandb.Image(fig)]})
+                    plt.close()
+
+                # Expand occupied_voxels_ov to match the shape of mask
+                occupied_voxels_ov_expanded = voxels_ov.unsqueeze(1).expand(-1, mask.shape[1], -1, -1)   # Opacity 0 for far voxels
+                occupied_voxels_rgb_expanded = voxels_rgb.unsqueeze(1).expand(-1, mask.shape[1], -1, -1)   # RGB 0 for far voxels
+
+                # Apply the mask to the tensors
+                #occupied_voxels_ov_selected = torch.where(mask, occupied_voxels_ov_expanded, torch.zeros_like(occupied_voxels_ov_expanded))   # Put ones for the formula, it nullifies non considered voxels' contributes
+                #occupied_voxels_rgb_selected = torch.where(mask, occupied_voxels_rgb_expanded, torch.zeros_like(occupied_voxels_rgb_expanded))
+                occupied_voxels_ov_selected = mask * occupied_voxels_ov_expanded   # Put ones for the formula, it nullifies non considered voxels' contributes
+                occupied_voxels_rgb_selected = mask * occupied_voxels_rgb_expanded
+
+                eps = 1e-6
+                depth_all = torch.norm(dynamical_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
+                depth_all = (depth_all - depth_all.min(dim=1, keepdim=True)[0]) / (depth_all.max(dim=1, keepdim=True)[0] - depth_all.min(dim=1, keepdim=True)[0])
+                depth_all = depth_all.unsqueeze(1).unsqueeze(-1).expand_as(mask)
+                #depth = torch.where(mask, depth_all, torch.zeros_like(depth_all))   # far voxels are suppress to normalize
+                #depth = (depth - depth.min(dim=2, keepdim=True)[0]) / (depth.max(dim=2, keepdim=True)[0] - depth.min(dim=2, keepdim=True)[0] + eps)
+                #depth = torch.where(mask, depth, torch.ones_like(depth))   # far voxels have distance 1
+                depth = mask * depth_all   # far voxels are suppress to normalize
+                depth = (depth - depth.min(dim=2, keepdim=True)[0]) / (depth.max(dim=2, keepdim=True)[0] - depth.min(dim=2, keepdim=True)[0] + eps)
+                depth = (~mask) + depth   # far voxels have distance 1
+                # NOTE: Here the depth values are normalized between the voxel concerning the specific rays, while depth_all is normalized between all voxels
+
+                voxels_distances_selected = distances * mask
+                if self.opt['closeness_threshold'] > 0:
+                    voxels_distances_selected = voxels_distances_selected  / threshold   # TODO: check if this works well
+                else:
+                    voxels_distances_selected = (voxels_distances_selected - voxels_distances_selected.min(dim=2, keepdim=True)[0]) / (voxels_distances_selected.max(dim=2, keepdim=True)[0] - voxels_distances_selected.min(dim=2, keepdim=True)[0] + eps)
+                voxels_distances_selected = (~mask) + voxels_distances_selected   # far voxels have distance 1
+
+                #wandb.log({"cum_of histogram:": wandb.Histogram(self.cum_of[0].detach().cpu().numpy())})
+                #wandb.log({"norm_dis histogram:": wandb.Histogram(norm_dis[0].detach().cpu().numpy())})
+
+                cum_of = (self.cum_of.unsqueeze(1).repeat(1, n_rays, 1, 1))
+                #selected_active_voxels = (((1 - cum_of) + occupied_voxels_ov_selected)/2 > 0).float()   # front_voxels, should be pushed to 1 to contiribute
+                selected_active_voxels = (1 - cum_of) * occupied_voxels_ov_selected
+                weights = selected_active_voxels * (1 - voxels_distances_selected)
+                #weights = (1+(1 - (cum_of > 0.5).float())) * (1 + sorted_occupied_voxels_ov_selected) * (1+(1 - norm_dis)) * sorted_mask / 8
+                weights = weights / (torch.sum(weights, dim=2, keepdim=True)+eps)
+
+                if self.visualize_stats:
+                    weights_0 = weights[0, :10].detach().view(10, -1).cpu().numpy()
+                    wandb.log({"weights for first 10 rays histogram:": wandb.Histogram(weights_0)})
+
+                eps = 1e-6
+                # Compute rendered_rgb_values_rays
+                exp = 1
+                #rendered_rgb_values_rays = torch.sum(occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp), dim=2) / (torch.sum((1 - closest_voxel_distances)**exp, dim=2) + eps)
+                #rendered_rgb_values_rays = torch.sum(weights * occupied_voxels_ov_selected * occupied_voxels_rgb_selected * ((1 - closest_voxel_distances)**exp), dim=2) / (torch.sum(weights, dim=2) + torch.sum((1 - closest_voxel_distances)**exp, dim=2) + eps)
+                
+                #rendered_rgb_values_rays = torch.sum(weights * sorted_occupied_voxels_rgb_selected * ((1 - sorted_closest_voxel_distances)**exp), dim=2) / (torch.sum((1 - sorted_closest_voxel_distances)**exp, dim=2) + eps)
+                rendered_rgb_values_rays = torch.sum(weights * occupied_voxels_rgb_selected, dim=2)
                
             u, v = selected_indices[..., 0], selected_indices[..., 1]
             batch_idx = torch.arange(self.batch_size).unsqueeze(1).to(dynamical_voxels_world_coo.device)
@@ -439,17 +532,22 @@ class RayCaster:
             # Apply softmax to the weights
             #softmax_weights = F.softmax(weights, dim=2)
             
-            w_1 = weights 
+            if self.opt['nearest_voxels'] == -1:
+                w_1 = weights 
 
-            sorted_occupied_voxels_ov = occupied_voxels_ov_selected.gather(2, indices)
-            occupied_voxels_mask = sorted_occupied_voxels_ov > self.opt['occupancy_threshold']
-            sorted_depth_all = sorted_depth_all * occupied_voxels_mask
-            sorted_depth_all = (sorted_depth_all - sorted_depth_all.min(dim=2, keepdim=True)[0]) / (sorted_depth_all.max(dim=2, keepdim=True)[0] - sorted_depth_all.min(dim=2, keepdim=True)[0] + 1e-6)
-            sorted_depth_all = (~occupied_voxels_mask) + sorted_depth_all   # far voxels have distance 1   
+                sorted_occupied_voxels_ov = occupied_voxels_ov_selected.gather(2, indices)
+                occupied_voxels_mask = sorted_occupied_voxels_ov > self.opt['occupancy_threshold']
+                sorted_depth_all = sorted_depth_all * occupied_voxels_mask
+                sorted_depth_all = (sorted_depth_all - sorted_depth_all.min(dim=2, keepdim=True)[0]) / (sorted_depth_all.max(dim=2, keepdim=True)[0] - sorted_depth_all.min(dim=2, keepdim=True)[0] + 1e-6)
+                sorted_depth_all = (~occupied_voxels_mask) + sorted_depth_all   # far voxels have distance 1   
 
-            # Compute weighted sum of depth_values
-            weighted_depth_values = w_1 * (1 - sorted_depth_all)   # TODO: this could probably be weights without softmax
-            depth_values = weighted_depth_values.sum(dim=2).squeeze(-1)
+                # Compute weighted sum of depth_values
+                weighted_depth_values = w_1 * (1 - sorted_depth_all)   # TODO: this could probably be weights without softmax
+                depth_values = weighted_depth_values.sum(dim=2).squeeze(-1)
+
+            if self.opt['nearest_voxels'] == -2:
+                active_voxels_depths = depth_all * selected_active_voxels
+                depth_values = active_voxels_depths.mean(dim=2).squeeze(-1)
 
             # Get the depth values
             #min_val = depth_image.min(dim=1, keepdim=True)[0].min(dim=2, keepdim=True)[0]

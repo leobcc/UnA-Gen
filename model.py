@@ -266,7 +266,37 @@ class OccupancyField_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=16, out_channels=hidden_features, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid(),     
         )
-        
+        input_dim = in_features-4+hidden_features
+        self.conv_1 = nn.Sequential(
+            nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=input_dim, out_channels=(input_dim)//2, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+        )
+        input_dim = (input_dim)//2+hidden_features
+        self.conv_2 = nn.Sequential(
+            nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=input_dim, out_channels=(input_dim)//2, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+        )
+        input_dim = (input_dim)//2+hidden_features
+        self.conv_3 = nn.Sequential(
+            nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=input_dim, out_channels=(input_dim)//2, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
+            nn.Sigmoid(),    
+        )
+        '''
         input_dim = in_features-4+hidden_features
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
@@ -274,7 +304,7 @@ class OccupancyField_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=1, stride=1, padding=0),
-            nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim, out_channels=(input_dim)//2, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
@@ -283,7 +313,7 @@ class OccupancyField_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=(input_dim)//2, out_channels=(input_dim)//2, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=(input_dim)//2, out_channels=(input_dim)//2, kernel_size=1, stride=1, padding=0),
-            nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=(input_dim)//2, out_channels=(input_dim)//4, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
@@ -296,12 +326,22 @@ class OccupancyField_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=(input_dim)//4, out_channels=out_channels, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid(),     
         )
+        '''
 
     def forward(self, x):
         x_c = x[:,:4]
         x_c = self.c_conv(x_c)
+        
+        x = torch.cat((x_c, x[:,4:]), dim=1)
+        x = self.conv_1(x)
+        x = torch.cat((x, x_c), dim=1)
+        x = self.conv_2(x)
+        x = torch.cat((x, x_c), dim=1)
+        x = self.conv_3(x)
+        '''
         x = torch.cat((x_c, x[:,4:]), dim=1)
         x = self.conv(x)
+        '''
 
         return x
     
@@ -345,7 +385,7 @@ class RGBfield_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=1, stride=1, padding=0),
-            nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim, out_channels=input_dim//2, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
@@ -372,7 +412,7 @@ class RGBfield_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=1, stride=1, padding=0),
-            nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
@@ -389,7 +429,7 @@ class RGBfield_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=1, stride=1, padding=0),
-            nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
@@ -406,7 +446,7 @@ class RGBfield_cnn_v2(nn.Module):
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=1, stride=1, padding=0),
-            nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=input_dim//4, out_channels=input_dim//4, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
@@ -599,17 +639,17 @@ class UnaGenModel(nn.Module):
             param.requires_grad = False
         '''
 
-        if self.opt['add_cano_coo']:
+        if self.opt['add_cano_coo'] and not self.opt['add_depth_features']:
             self.OccupancyField = OccupancyField_cnn_v2(in_features=features+4, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
             self.RGBField = RGBfield_cnn_v2(in_features=features+4, out_channels=self.opt['decoder']['depth_dep_res']).cuda()            
             #self.Shader = ShadowField_cnn(in_features=features, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
-        elif self.opt['add_depth_features']:
+        elif self.opt['add_depth_features'] and not self.opt['add_cano_coo']:
             self.OccupancyField = OccupancyField_cnn(in_features=features+1, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
             self.RGBField = RGBfield_cnn(in_features=features+1, out_channels=self.opt['decoder']['depth_dep_res']).cuda()            
             #self.Shader = ShadowField_cnn(in_features=features, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
         elif self.opt['add_cano_coo'] and self.opt['add_depth_features']:
-            self.OccupancyField = OccupancyField_cnn(in_features=features+5, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
-            self.RGBField = RGBfield_cnn(in_features=features+5, out_channels=self.opt['decoder']['depth_dep_res']).cuda()            
+            self.OccupancyField = OccupancyField_cnn_v2(in_features=features+5, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
+            self.RGBField = RGBfield_cnn_v2(in_features=features+5, out_channels=self.opt['decoder']['depth_dep_res']).cuda()            
             #self.Shader = ShadowField_cnn(in_features=features, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
         else:
             self.OccupancyField = OccupancyField_cnn(in_features=features, out_channels=self.opt['decoder']['depth_dep_res']).cuda()
@@ -774,70 +814,86 @@ class UnaGenModel(nn.Module):
 
         if self.visualize_stats:
             with torch.no_grad():
-                features_0 = features[0].clone().detach().view(features.shape[2], -1, 3).cpu().numpy()
+                features_0 = features[0, :9].clone().detach().view(features.shape[2], -1, 3).cpu().numpy()
                 wandb.log({'features': [wandb.Image(features_0)]})
 
         # --- Occupancy ---
-        occupancy_field = self.OccupancyField(features)
-        weights = torch.linspace(1, 0, steps=occupancy_field.shape[1]).to(occupancy_field.device)
+        occupancy_field_t = self.OccupancyField(features)
+        weights = torch.linspace(1, 0, steps=occupancy_field_t.shape[1]).to(occupancy_field_t.device)
         weights /= weights.sum()  
-        weights = weights.view(1, occupancy_field.shape[1], 1, 1)
+        weights = weights.view(1, occupancy_field_t.shape[1], 1, 1)
 
-        #of_dpt = (occupancy_field * weights).sum(dim=1)
+        #of_dpt = (occupancy_field_t * weights).sum(dim=1)
+        #min_val, max_val = torch.amin(of_dpt, dim=(-1, -2)), torch.amax(of_dpt, dim=(-1, -2))
+        #of_dpt = (of_dpt - min_val.view(-1, 1, 1)) / (max_val - min_val).view(-1, 1, 1)
+        #of_dpt = F.pad(of_dpt, (1, 1, 1, 1), value=0)
+
+        if self.visualize_stats:
+            with torch.no_grad():
+                selected_images = occupancy_field_t[0, :6]  # This is now of shape [6, H, W]
+                concatenated_images_0 = torch.cat(tuple(selected_images), dim=-1)
+                selected_images = occupancy_field_t[0, 6:12]  # This is now of shape [6, H, W]
+                concatenated_images_1 = torch.cat(tuple(selected_images), dim=-1)
+                selected_images = occupancy_field_t[0, 12:18]  # This is now of shape [6, H, W]
+                concatenated_images_2 = torch.cat(tuple(selected_images), dim=-1)
+                selected_images = occupancy_field_t[0, -18:-12]  # This is now of shape [6, H, W]
+                concatenated_images_3 = torch.cat(tuple(selected_images), dim=-1)
+                selected_images = occupancy_field_t[0, -12:-6]  # This is now of shape [6, H, W]
+                concatenated_images_4 = torch.cat(tuple(selected_images), dim=-1)
+                selected_images = occupancy_field_t[0, -6:]  # This is now of shape [6, H, W]
+                concatenated_images_5 = torch.cat(tuple(selected_images), dim=-1)
+                concatenated_images = torch.cat((concatenated_images_0, concatenated_images_1, concatenated_images_2, concatenated_images_3,
+                                                 concatenated_images_4, concatenated_images_5), dim=-2)
+                concatenated_images_np = concatenated_images.cpu().numpy()
+                wandb.log({"Occupancy field": [wandb.Image(concatenated_images_np, mode='L')]})
+
+        
+        weights = torch.linspace(1, 0, steps=occupancy_field_t.shape[1], device=occupancy_field_t.device)**2
+        weights /= (weights).sum()  
+        weights = weights.view(1, -1, 1, 1)
+
+        of_dpt = (occupancy_field_t * weights).sum(dim=1)
         #min_val, max_val = torch.amin(of_dpt, dim=(-1, -2)), torch.amax(of_dpt, dim=(-1, -2))
         #of_dpt = (of_dpt - min_val.view(-1, 1, 1)) / (max_val - min_val).view(-1, 1, 1)
         #of_dpt = F.pad(of_dpt, (1, 1, 1, 1), value=0)
         
 
-        if self.visualize_stats:
-            with torch.no_grad():
-                selected_images = occupancy_field[0, :6]  # This is now of shape [6, H, W]
-                concatenated_images_0 = torch.cat(tuple(selected_images), dim=-1)
-                selected_images = occupancy_field[0, 6:12]  # This is now of shape [6, H, W]
-                concatenated_images_1 = torch.cat(tuple(selected_images), dim=-1)
-                selected_images = occupancy_field[0, 12:18]  # This is now of shape [6, H, W]
-                concatenated_images_2 = torch.cat(tuple(selected_images), dim=-1)
-                selected_images = occupancy_field[0, 18:24]  # This is now of shape [6, H, W]
-                concatenated_images_3 = torch.cat(tuple(selected_images), dim=-1)
-                concatenated_images = torch.cat((concatenated_images_0, concatenated_images_1, concatenated_images_2, concatenated_images_3), dim=-2)
-                concatenated_images_np = concatenated_images.cpu().numpy()
-                wandb.log({"Occupancy field": [wandb.Image(concatenated_images_np, mode='L')]})
-
-        weights = torch.linspace(1, 0, steps=occupancy_field.shape[1], device=occupancy_field.device)
-        weights /= weights.sum()  
-        weights = weights.view(1, -1, 1, 1)
-
-        of_dpt = (occupancy_field * weights).sum(dim=1)
-        #min_val, max_val = torch.amin(of_dpt, dim=(-1, -2)), torch.amax(of_dpt, dim=(-1, -2))
-        #of_dpt = (of_dpt - min_val.view(-1, 1, 1)) / (max_val - min_val).view(-1, 1, 1)
-        of_dpt = F.pad(of_dpt, (1, 1, 1, 1), value=0)
-
-        #cum_of = torch.cumsum(occupancy_field, dim=1) - occupancy_field
+        #cum_of = torch.cumsum(occupancy_field_t, dim=1) - occupancy_field_t
         #inv_cum_of = 1 / (cum_of + 1e-6)
-        cum_of = torch.clamp(torch.cumsum(occupancy_field, dim=1) - occupancy_field, 0, 1)
+        cum_of = torch.clamp(torch.cumsum(occupancy_field_t, dim=1) - occupancy_field_t, 0, 1)
         #cum_of = F.pad(cum_of, (1, 1, 1, 1), value=0)
-        double_cum_of = occupancy_field 
-        softmin = F.pad(occupancy_field * (1-cum_of), (1, 1, 1, 1), value=0)
+        double_cum_of = occupancy_field_t 
+        softmin = occupancy_field_t * (1-cum_of)
         #softmin = torch.softmax(F.pad(double_cum_of * (1-cum_of), (1, 1, 1, 1), value=0), dim=1)
-        front_idxs = torch.arange(softmin.shape[1], device=softmin.device).view(1, -1, 1, 1).repeat(self.batch_size, 1, softmin.shape[2], softmin.shape[3])
+        #front_idxs = torch.arange(softmin.shape[1], device=softmin.device).view(1, -1, 1, 1).repeat(self.batch_size, 1, softmin.shape[2], softmin.shape[3])
 
-        front_idxs = (front_idxs * softmin).sum(dim=1) 
+        front_idxs = (1-cum_of).sum(dim=1)
+        #front_idxs = (front_idxs * softmin).sum(dim=1) 
         #front_idxs = (front_idxs * softmin).sum(dim=1) * (image.mean(dim=1) > 0).float()
         #front_idxs = torch.argmin(F.pad(double_cum_of, (1, 1, 1, 1), value=0), dim=1) * (image.mean(dim=1) > 0).float()
-        d_max = torch.amax(front_idxs, dim=(-1, -2))
-        d_min = torch.amin(front_idxs + (1 - (image.mean(dim=1) > 0).float())*occupancy_field.shape[1], dim=(-1, -2))
+        #d_max = torch.amax(front_idxs, dim=(-1, -2))
+        #d_min = torch.amin(front_idxs + (1 - (image.mean(dim=1) > 0).float())*occupancy_field_t.shape[1], dim=(-1, -2))
         #of_dpt = torch.clamp(1 - (front_idxs.float() - d_min.view(-1, 1, 1)) / (d_max - d_min + 1e-6).view(-1, 1, 1), 0, 1) * (image.mean(dim=1) > 0).float()
         #of_dpt = (1 - front_idxs.float() / d_max.view(-1, 1, 1)) * (image.mean(dim=1) > 0).float()
-        #of_dpt = (1 - (front_idxs.float() / occupancy_field.shape[1])) * (image.mean(dim=1) > 0).float()
-        of_dpt = (1 - (front_idxs.float() / occupancy_field.shape[1])) 
+        #of_dpt = (1 - (front_idxs.float() / occupancy_field_t.shape[1])) * (image.mean(dim=1) > 0).float()
+        #of_dpt = (1 - (front_idxs.float() / occupancy_field_t.shape[1])) 
         stacked_images = torch.cat((of_dpt[0], depth_image[0]), dim=1)
         wandb.log({'of_dpt': [wandb.Image(stacked_images.clone().detach().cpu().numpy(), mode='L')]})
 
+        '''
         front_idxs_tensor = torch.zeros_like(double_cum_of)
         front_idxs_tensor[torch.arange(self.batch_size), front_idxs.long()] = 1
-        occupancy_field = self.interpolate_to_voxels(occupancy_field, dynamical_voxels_world_coo, voxels_uv)
+        '''
+        #front_idxs = ((occupancy_field_t * (1 - cum_of)) > 0).float()
+        front_idxs = occupancy_field_t * (1 - cum_of)
+        occupancy_field = self.interpolate_to_voxels(occupancy_field_t, dynamical_voxels_world_coo, voxels_uv)
+        cum_of_s = self.interpolate_to_voxels(cum_of, dynamical_voxels_world_coo, voxels_uv)
+        front_idxs = self.interpolate_to_voxels(front_idxs, dynamical_voxels_world_coo, voxels_uv)
+        activity_mask = (front_idxs > 0).float()
+        '''
         front_idxs_tensor = self.interpolate_to_voxels(front_idxs_tensor, dynamical_voxels_world_coo, voxels_uv)
         activity_mask = (front_idxs_tensor > 0).float()
+        '''
 
         if self.visualize_stats:
             with torch.no_grad():
@@ -877,7 +933,7 @@ class UnaGenModel(nn.Module):
         
         # --- Render values for optimization ---
         t0_render_rgb_values = time.time()
-        ray_caster = RayCaster(self, dynamical_voxels_world_coo, occupancy_field, voxels_rgb, image, depth_image)
+        ray_caster = RayCaster(self, dynamical_voxels_world_coo, occupancy_field, cum_of_s, voxels_rgb, image, depth_image)
         training_values = ray_caster.render_values_at_rays(mode='training')
         t1_render_rgb_values = time.time()
 
@@ -886,7 +942,7 @@ class UnaGenModel(nn.Module):
 
         depth_all = torch.norm(dynamical_voxels_world_coo - self.cam_loc.unsqueeze(1), dim=-1)
         depth_all = (depth_all - depth_all.min(dim=1, keepdim=True)[0]) / (depth_all.max(dim=1, keepdim=True)[0] - depth_all.min(dim=1, keepdim=True)[0])
-        #activity_mask = (depth_all < 0.3).float().unsqueeze(-1)
+        activity_mask = (depth_all < 0.3).float().unsqueeze(-1)
         if inputs['epoch'] == 0 or (inputs['epoch']+1) % self.opt['active_occupancy_refinement_epochs'] == 0:
             self.activity_occupancy = occupancy_field.detach().mean(dim=0)
             self.activity_occupancy_rgb = rgb_field.detach().mean(dim=0)
@@ -943,6 +999,7 @@ class UnaGenModel(nn.Module):
 
         outputs = {'dynamical_voxels_coo': dynamical_voxels_world_coo,
                    'occupancy_field': occupancy_field,
+                   'cum_of': cum_of,
                    'of_dpt': of_dpt,
                    'depth_image': depth_image,
                    'rgb_field': rgb_field, 
@@ -1142,7 +1199,7 @@ class UnaGenModel(nn.Module):
                                         features[batch_indices, :, torch.clamp(y_int+1, 0, features.shape[2] - 1), torch.clamp(x_int+1, 0, features.shape[3] - 1)] * (1 - x_frac) * (1 - y_frac)
 
         if not rgb:
-            depth_values = voxels_coo[:, :, 2]
+            depth_values = torch.norm(voxels_coo - self.cam_loc.unsqueeze(1), dim=-1)
             depth_values = (depth_values - depth_values.min(dim=1, keepdim=True)[0]) / (depth_values.max(dim=1, keepdim=True)[0] - depth_values.min(dim=1, keepdim=True)[0]) 
             z_int = (depth_values * (features.shape[1] - 1)).long()
             z_frac = (depth_values * (features.shape[1] - 1) - z_int.float())
@@ -1152,7 +1209,7 @@ class UnaGenModel(nn.Module):
                         interpolated_features[batch_indices, voxels_indices, torch.clamp(z_int+1, max=features.shape[1]-1)] * (1 - z_frac)
             features = features.unsqueeze(-1)
         if rgb:
-            depth_values = voxels_coo[:, :, 2]
+            depth_values = torch.norm(voxels_coo - self.cam_loc.unsqueeze(1), dim=-1)
             depth_values = (depth_values - depth_values.min(dim=1, keepdim=True)[0]) / (depth_values.max(dim=1, keepdim=True)[0] - depth_values.min(dim=1, keepdim=True)[0]) 
             z_r_int = (depth_values * (int(features.shape[1]//3) - 1)).long()
             z_g_int = (depth_values * (int(features.shape[1]//3) - 1)).long() + features.shape[1]//3

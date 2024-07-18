@@ -135,13 +135,20 @@ def preprocess_data(video_folder, process_smpl_output=False, process_depth_img=F
             #rgb_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_BGR2RGB)
             if os.path.exists(checked_mask_folder):
                 mask = cv2.imread(os.path.join(checked_mask_folder, filename), cv2.IMREAD_GRAYSCALE)
+                wandb.log({"Mask": [wandb.Image(mask)]})
             elif os.path.exists(refined_mask_folder):
                 mask = cv2.imread(os.path.join(refined_mask_folder, filename), cv2.IMREAD_GRAYSCALE)
-            else:
+                wandb.log({"Mask": [wandb.Image(mask)]})
+            elif os.path.exists(masks_folder):
                 mask = cv2.imread(os.path.join(masks_folder, filename), cv2.IMREAD_GRAYSCALE)
-            
-            wandb.log({"Mask": [wandb.Image(mask)]})
-            masked_image = cv2.bitwise_and(rgb_frame, rgb_frame, mask=mask)   # Apply mask to remove background
+                wandb.log({"Mask": [wandb.Image(mask)]})
+            else:
+                mask = None
+
+            if mask is not None:
+                masked_image = cv2.bitwise_and(rgb_frame, rgb_frame, mask=mask)   # Apply mask to remove background
+            else:
+                masked_image = rgb_frame
             cv2.imwrite(os.path.join(masked_img_folder, filename), masked_image)   # Save masked image
             command = ["python3", "run.py", "--encoder", "vitl", "--img-path", os.path.join(masked_img_folder, filename), "--outdir", depth_img_folder, "--pred-only", "--grayscale"]
             subprocess.run(command, check=True, cwd="/UnA-Gen/supp_repos/Depth_Anything_main")
@@ -149,7 +156,10 @@ def preprocess_data(video_folder, process_smpl_output=False, process_depth_img=F
             filename = f"{filename_without_extension}_depth.png"
             depth_image = cv2.imread(os.path.join(depth_img_folder, filename), cv2.IMREAD_COLOR) 
             wandb.log({"Depth Image": [wandb.Image(depth_image)]})
-            depth_image = cv2.bitwise_and(depth_image, depth_image, mask=mask)
+            if mask is not None:
+                depth_image = cv2.bitwise_and(depth_image, depth_image, mask=mask)
+            else:
+                depth_image = depth_image
             wandb.log({"Depth Image after mask": [wandb.Image(depth_image)]})
             cv2.imwrite(os.path.join(depth_img_folder, filename), depth_image)   # Apply mask again to remove background noise
 
@@ -266,7 +276,7 @@ def preprocess_data(video_folder, process_smpl_output=False, process_depth_img=F
 
 
 if __name__ == "__main__":
-    video_folder = '/UnA-Gen/data/data/train/courtyard_laceShoe_00'
+    video_folder = '/UnA-Gen/data/data/train/0025_11'
     parser = argparse.ArgumentParser()
     parser.add_argument('--video_folder', type=str, default=video_folder)
     parser.add_argument('--smpl_output', action='store_true', help='Use SMPL server to obtain SMPL outputs')

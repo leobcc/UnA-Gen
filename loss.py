@@ -17,7 +17,11 @@ def loss_c(confs, outputs):
         activity_ocuupancy_b = outputs['activity_occupancy'].unsqueeze(0)
         #activity_ocuupancy_b = outputs['prev_ov'].unsqueeze(0).expand_as(outputs['occupancy_field'])
         canonical_consistency_loss = F.mse_loss(outputs['occupancy_field'], activity_ocuupancy_b, reduction='mean')
-        incr_weight = confs['canonical_consistency_loss_weight']*abs(math.cos(outputs['epoch']/20*math.pi))*100
+        #incr_weight = confs['canonical_consistency_loss_weight']*(math.cos(outputs['epoch']/20*math.pi) + 1)
+        if outputs['epoch'] < 20:
+            incr_weight = 0
+        else:
+            incr_weight = confs['canonical_consistency_loss_weight']
         regularization += canonical_consistency_loss * incr_weight
         wandb.log({'canonical_consistency_loss': canonical_consistency_loss})
 
@@ -48,13 +52,17 @@ def loss_c(confs, outputs):
         wandb.log({'depth_img_loss': depth_img_loss})
 
     if confs['binary_cross_entropy']:
-        #binary_cross_entropy_loss = torch.mean((outputs['occupancy_field'] - 0)**2 * (outputs['occupancy_field'] - 1)**2)
+        binary_cross_entropy_loss = torch.mean((outputs['occupancy_field'] - 0)**2 * (outputs['occupancy_field'] - 1)**2)
+        regularization += binary_cross_entropy_loss * confs['binary_cross_entropy_weight']  
+        wandb.log({'binary_cross_entropy_loss': binary_cross_entropy_loss})
+
+        #binary_cross_entropy_loss = torch.mean((outputs['activity_occupancy'] - 0)**2 * (outputs['activity_occupancy'] - 1)**2)
         #regularization += binary_cross_entropy_loss * confs['binary_cross_entropy_weight']  
         #wandb.log({'binary_cross_entropy_loss': binary_cross_entropy_loss})
 
-        binary_cross_entropy_loss = torch.mean((outputs['activity_occupancy'] - 0)**2 * (outputs['activity_occupancy'] - 1)**2)
-        regularization += binary_cross_entropy_loss * confs['binary_cross_entropy_weight']  
-        wandb.log({'binary_cross_entropy_loss': binary_cross_entropy_loss})
+        #binary_cross_entropy_loss = torch.mean((outputs['cum_of'] - 0)**2 * (outputs['cum_of'] - 1)**2)
+        #regularization += binary_cross_entropy_loss * confs['binary_cross_entropy_weight']  
+        #wandb.log({'binary_cross_entropy_loss': binary_cross_entropy_loss})
 
     if confs['occupancy_loss']:
         occupancy_loss = F.mse_loss(outputs['occupancy_field'], torch.ones_like(outputs['occupancy_field']))
