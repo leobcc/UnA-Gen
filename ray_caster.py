@@ -588,36 +588,39 @@ class RayCaster:
         # ---------------------------------------------------------------------------------------------------------------------------------------
         if self.mode == 'training' and self.visualize_stats:
             with torch.no_grad():
-                batch_idx = torch.arange(self.batch_size).unsqueeze(1).to(image.device)
+                try:
+                    batch_idx = torch.arange(self.batch_size).unsqueeze(1).to(image.device)
 
-                # Compute images
-                rays_uv_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
-                rays_uv_image[batch_idx, :, selected_indices[:, :, 1], selected_indices[:, :, 0]] = torch.ones(3).cuda()
-                y_int = voxels_uv[..., 1].long().unsqueeze(1)
-                x_int = voxels_uv[..., 0].long().unsqueeze(1)
-                voxels_uv_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
-                voxels_uv_image[batch_idx, :, y_int, x_int] = torch.ones(3).cuda()
-                occupancy_map = (voxels_ov > self.opt['occupancy_threshold']).float()
-                masked_voxels = voxels_uv * occupancy_map
-                y_int = masked_voxels[..., 1].long().unsqueeze(1)
-                x_int = masked_voxels[..., 0].long().unsqueeze(1)
-                occupied_voxels_uv_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
-                occupied_voxels_uv_image[batch_idx, :, y_int, x_int] = torch.ones(3).cuda()
-                occupied_voxels_uv_image_rgb = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
-                occupied_voxels_uv_image_rgb[batch_idx, :, y_int, x_int] = voxels_rgb[batch_idx, :, :]
-                #voxels_rgb_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
-                #voxels_rgb_image[batch_idx, :, y_int, x_int] = voxels_rgb[batch_idx, :, :]/self.shadow_field[batch_idx, :, :].squeeze(1).expand_as(voxels_rgb)
-                #shadow_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
-                #shadow_image[batch_idx, :, y_int, x_int] = self.shadow_field[batch_idx, :, :].squeeze(1).expand_as(voxels_rgb)
-                depth_image_from_values = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)  
-                depth_image_from_values[batch_idx, :, selected_indices[:, :, 1], selected_indices[:, :, 0]] = depth_values.unsqueeze(-1).repeat(1, 1, 3)
-                #stacked_images = torch.cat((image[0], rays_uv_image[0], voxels_uv_image[0], 
-                #                            occupied_voxels_uv_image[0], occupied_voxels_uv_image_rgb[0], voxels_rgb_image[0], 
-                #                            shadow_image[0], depth_image_from_values[0], depth_image[0].unsqueeze(0).repeat(3, 1, 1)), dim=-1)  
-                stacked_images = torch.cat((image[0], rays_uv_image[0], voxels_uv_image[0], 
-                                            occupied_voxels_uv_image[0], occupied_voxels_uv_image_rgb[0], 
-                                            depth_image_from_values[0], depth_image[0].unsqueeze(0).repeat(3, 1, 1)), dim=-1)  
-                wandb.log({"Stacked images": [wandb.Image(stacked_images.detach().cpu().numpy().transpose(1, 2, 0))]})
+                    # Compute images
+                    rays_uv_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
+                    rays_uv_image[batch_idx, :, selected_indices[:, :, 1], selected_indices[:, :, 0]] = torch.ones(3).cuda()
+                    y_int = voxels_uv[..., 1].long().unsqueeze(1)
+                    x_int = voxels_uv[..., 0].long().unsqueeze(1)
+                    voxels_uv_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
+                    voxels_uv_image[batch_idx, :, y_int, x_int] = torch.ones(3).cuda()
+                    occupancy_map = (voxels_ov > self.opt['occupancy_threshold']).float()
+                    masked_voxels = voxels_uv * occupancy_map
+                    y_int = masked_voxels[..., 1].long().unsqueeze(1)
+                    x_int = masked_voxels[..., 0].long().unsqueeze(1)
+                    occupied_voxels_uv_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
+                    occupied_voxels_uv_image[batch_idx, :, y_int, x_int] = torch.ones(3).cuda()
+                    occupied_voxels_uv_image_rgb = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
+                    occupied_voxels_uv_image_rgb[batch_idx, :, y_int, x_int] = voxels_rgb[batch_idx, :, :]
+                    #voxels_rgb_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
+                    #voxels_rgb_image[batch_idx, :, y_int, x_int] = voxels_rgb[batch_idx, :, :]/self.shadow_field[batch_idx, :, :].squeeze(1).expand_as(voxels_rgb)
+                    #shadow_image = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)
+                    #shadow_image[batch_idx, :, y_int, x_int] = self.shadow_field[batch_idx, :, :].squeeze(1).expand_as(voxels_rgb)
+                    depth_image_from_values = torch.zeros(self.batch_size, 3, height, width, device=image.device, requires_grad=False)  
+                    depth_image_from_values[batch_idx, :, selected_indices[:, :, 1], selected_indices[:, :, 0]] = depth_values.unsqueeze(-1).repeat(1, 1, 3)
+                    #stacked_images = torch.cat((image[0], rays_uv_image[0], voxels_uv_image[0], 
+                    #                            occupied_voxels_uv_image[0], occupied_voxels_uv_image_rgb[0], voxels_rgb_image[0], 
+                    #                            shadow_image[0], depth_image_from_values[0], depth_image[0].unsqueeze(0).repeat(3, 1, 1)), dim=-1)  
+                    stacked_images = torch.cat((image[0], rays_uv_image[0], voxels_uv_image[0], 
+                                                occupied_voxels_uv_image[0], occupied_voxels_uv_image_rgb[0], 
+                                                depth_image_from_values[0], depth_image[0].unsqueeze(0).repeat(3, 1, 1)), dim=-1)  
+                    wandb.log({"Stacked images": [wandb.Image(stacked_images.detach().cpu().numpy().transpose(1, 2, 0))]})
+                except:
+                    pass
         # -----------------------------------------------------------------------------------------------------------------------------------
             
         if self.mode == 'render_image':

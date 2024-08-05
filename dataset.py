@@ -13,7 +13,7 @@ from lib.utils.utils import get_camera_params
 
 from torchvision.transforms import Compose
 import sys
-sys.path.append('/UnA-Gen/supp_repos/Depth_Anything_main/')
+sys.path.append('/home/lbocchi/UnA-Gen/supp_repos/Depth_Anything_main/')
 from depth_anything.dpt import DepthAnything
 from depth_anything.util.transform import Resize, NormalizeImage, PrepareForNet
 
@@ -29,6 +29,8 @@ class una_gen_dataset(Dataset):
         split_dir = os.path.join(data_dir, split)
         for video_folder in os.listdir(split_dir):
             if video_folder == 'courtyard_backpack_00':   # This is a temporary fix, we should remove this line
+                continue
+            if video_folder == '0025_11':   # This is a temporary fix, we should remove this line
                 continue
             video_path = os.path.join(split_dir, video_folder)
             frame_dir = os.path.join(video_path, "rgb_frames")

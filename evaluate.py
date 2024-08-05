@@ -17,7 +17,7 @@ import wandb
 from skimage.metrics import structural_similarity as ssim
 
 def evaluate():
-    confs_file = "/UnA-Gen/confs.yaml"
+    confs_file = "/home/lbocchi/UnA-Gen/confs.yaml" 
     with open(confs_file, 'r') as file:
         confs = yaml.safe_load(file)
 
@@ -31,10 +31,11 @@ def evaluate():
     transform = transforms.Compose([
                         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
-    dataset = una_gen_dataset(data_dir="/UnA-Gen/data/data", split='train', frame_skip=confs['frame_skip'], image_size=(confs['image_dim'], confs['image_dim']), transform=None)
+    dataset = una_gen_dataset(data_dir="/home/lbocchi/UnA-Gen/data/data", split='train', frame_skip=confs['frame_skip'], image_size=(confs['image_dim'], confs['image_dim']), transform=None)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=confs['shuffle'], num_workers=confs['num_workers'])
 
     confs['model']['closeness_threshold'] = -4   # Enforce closeness threshold (negative values for k-nearest neighbors)
+    confs['shuffle'] = False
     model = UnaGenModel(confs['model'], in_channels=3, features=confs['model']['features']) 
     num_params = sum(p.numel() for p in model.parameters())
     num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -43,9 +44,9 @@ def evaluate():
     print('Trainable parameters: {:.2f}M'.format(num_trainable_params / 1e6))
     print('----------------------------------------------')
 
-    if os.path.exists('outputs/last.pth'):
+    if os.path.exists('/home/lbocchi/outputs/last.pth'):
         print("Loading model from last checkpoint")
-        model.load_state_dict(torch.load('outputs/last.pth'))
+        model.load_state_dict(torch.load('/home/lbocchi/outputs/last_1.pth'))
 
     # Move model to GPU if available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -53,23 +54,26 @@ def evaluate():
     print(f'Model moved to {device}')
 
     model.eval()
+    model.mapping_dim = 256
+    model.matrix_mapping = model.initialize_matrix_mapping(model.mapping_dim, 0.5).to(device)
     with torch.no_grad():
         # Pass through the whole video to retain the activity occupancy canonical shape
         print("Starting evaluation...")
         print("Inferencing thorugh the whole video to output the canonical shape.")
         for batch_idx, inputs in enumerate(dataloader):
             print("ETA:", (len(dataloader)-batch_idx), "batches left", "|" , round(batch_idx/len(dataloader)*100), "%", "|", end="\r")
-
-            outputs_folder = os.path.join('outputs', 'eval', inputs['metadata']['subject'][0])
-            os.makedirs(outputs_folder, exist_ok=True)
-
             inputs['masked_image'] = inputs['masked_image'].to(device)
 
             inputs['epoch'] = 0
             inputs['batch_idx'] = batch_idx
             inputs['num_samples'] = len(dataloader)
             outputs = model(inputs)
-    
+
+            # Generate dynamical mesh
+            outputs_folder = os.path.join('outputs', 'eval', inputs['metadata']['subject'][0], 'canonical_from_frames')
+            os.makedirs(outputs_folder, exist_ok=True)
+            mesh = model.generate_mesh(outputs['dynamical_voxels_coo'], outputs['occupancy_field'], outputs['rgb_field'], outputs_folder, batch_idx, mode='cano')
+            
         print("Generating canonical mesh ----------------")
         outputs_folder = os.path.join('outputs', 'eval', inputs['metadata']['subject'][0], 'canonical', 'activity_occupancy')
         os.makedirs(outputs_folder, exist_ok=True)

@@ -213,6 +213,12 @@ def get_global_transformation(smpl_pose_batch, smpl_trans_batch, scale_batch):
 
 # --------------
 
+def stable_softmax(logits, dim):
+    max_vals, _ = logits.max(dim=dim, keepdim=True)
+    exps = torch.exp(logits - max_vals)
+    sum_exps = exps.sum(dim=dim, keepdim=True)
+    return exps / sum_exps
+
 
 # Matrix refinement
 

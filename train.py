@@ -17,14 +17,16 @@ import wandb
 from skimage.metrics import structural_similarity as ssim
 
 def train():
-    confs_file = "/UnA-Gen/confs.yaml"
+    confs_file = "/home/lbocchi/UnA-Gen/confs.yaml"
     with open(confs_file, 'r') as file:
         confs = yaml.safe_load(file)
 
+    os.environ['WANDB_DIR'] = '/home/lbocchi/UnA-Gen/data/wandb'
     wandb.require("core")
     wandb.init(
         project="una-gen",
         config=confs,
+        dir='/home/lbocchi/UnA-Gen/data/wandb'
     )
 
     learning_rate = confs['learning_rate']
@@ -35,7 +37,7 @@ def train():
     transform = transforms.Compose([
                         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
-    dataset = una_gen_dataset(data_dir="/UnA-Gen/data/data", split='train', frame_skip=confs['frame_skip'], image_size=(confs['image_dim'], confs['image_dim']), transform=None)
+    dataset = una_gen_dataset(data_dir="/home/lbocchi/UnA-Gen/data/data", split='train', frame_skip=confs['frame_skip'], image_size=(confs['image_dim'], confs['image_dim']), transform=None)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=confs['shuffle'], num_workers=confs['num_workers'])
 
     os.makedirs('outputs', exist_ok=True)
@@ -109,11 +111,17 @@ def train():
                     wandb.log({"rendered_image": [wandb.Image(rendered_image[0].cpu().detach().numpy().transpose(1, 2, 0))]})
                     wandb.log({"ssim": ssim_value})
 
-        if (epoch+1) % 40 == 0:
-            outputs_folder = os.path.join('outputs', 'train', inputs['metadata']['subject'][0])
-            os.makedirs(outputs_folder, exist_ok=True)
-            mesh = model.generate_mesh(None, model.activity_occupancy, model.activity_occupancy_rgb, outputs_folder, inputs['frame_id'], mode='ao_cano') 
-
+        if (epoch+1) % 10 == 0:
+            try:
+                outputs_folder = os.path.join('outputs', 'train', inputs['metadata']['subject'][0], 'cano')
+                os.makedirs(outputs_folder, exist_ok=True)
+                mesh = model.generate_mesh(outputs['dynamical_voxels_coo'], outputs['occupancy_field'], outputs['rgb_field'], outputs_folder, epoch, mode='cano')
+                outputs_folder = os.path.join('outputs', 'train', inputs['metadata']['subject'][0], 'ao_cano')
+                os.makedirs(outputs_folder, exist_ok=True)
+                mesh = model.generate_mesh(None, model.activity_occupancy, model.activity_occupancy_rgb, outputs_folder, epoch, mode='ao_cano')
+                #mesh = model.generate_mesh(outputs['dynamical_voxels_coo'], model.activity_occupancy, model.activity_occupancy_rgb, outputs_folder, epoch, mode='dynamical_pc') 
+            except:
+                print("Error in mesh generation") 
         torch.save(model.state_dict(), 'outputs/last.pth')
 
         average_loss = total_loss / len(dataloader)

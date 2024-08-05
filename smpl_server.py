@@ -8,7 +8,7 @@ class SMPLServer(torch.nn.Module):
         super().__init__()
 
 
-        self.smpl = SMPL(model_path='/UnA-Gen/smpl/smpl_model',
+        self.smpl = SMPL(model_path='/home/lbocchi/UnA-Gen/smpl/smpl_model',
                          gender=gender,
                          batch_size=1,
                          use_hands=False,
