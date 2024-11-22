@@ -1,8 +1,8 @@
-continue_training: False
+continue_training: True
 
-learning_rate: 0.0001
+learning_rate: 0.0001   # 0.0001
 num_epochs: 1000
-batch_size: 2
+batch_size: 1
 frame_skip: 10
 shuffle: True
 crop: True
@@ -12,9 +12,9 @@ num_workers: 0
 model: 
   name: "UnA-Gen"
   visualize_stats: 'epoch_end'   # True, False, 'epoch_end'
-  features: 128    # 512 for resnet
+  features: 64    # 512 for resnet
   add_cano_coo: True
-  add_depth_features: True
+  add_depth_features: False
 
   encoder: 
     name: "unet"   # To-train: "unet", "cnn" | Pretrained: "dpt", "resnet", "unet_resnet" 
@@ -24,15 +24,12 @@ model:
   decoder:
     name: "cnn"   # "cnn"
     train: True
-    depth_dep_res: 32
+    depth_dep_res: 64
 
   distribute_with_perspective: True   # I think this makes sense only if smpl_transform==world
-  standard_depth_n: 0.5   # This will have to be learnt
-  standard_scale_z: 1   # This will have to be learnt
-  standard_depth_f: 8   # Currently not used
-  mapping_dim: 64
+  mapping_dim: 128
   occupancy_threshold: 0.5
-  ao_threshold: 0.8
+  ao_threshold: 0.5
   relative_ov: False
   # Mask pruning for training
   mask_pruning: False
@@ -45,7 +42,7 @@ model:
   ray_cast_rgb: False   # Trains on values rendered by ray casting
   ray_cast_depth: False   # Trains on values rendered by ray casting
   train_on_non_black: True   # Train only on non-black pixels
-  n_training_rays: 0   # Put 0 to disable training rays
+  n_training_rays: 512   # Put 0 to disable training rays
   nearest_voxels: -2   # Put -1 to use voxels closer than threshold, -2 uses the custom rendering formula
   closeness_threshold: -8   # Pixel distance. If control dynamical space, use -k, if control canonical, use k-nearest neighbors
   #----------------------
@@ -56,16 +53,19 @@ model:
   refinement_epochs: 100
   #----------------------
   active_occupancy_refinement: True
-  active_occupancy_refinement_epochs: 60
+  phase_push: False
+  active_occupancy_refinement_epochs: 100
+
+  template_feat: False
 
 loss:
   rendering_loss: False   # Main loss (training rays) | should always correspond to evaluation rendering method
   canonical_consistency_loss: True   # This regularizes the canonical occupancy field 
-  canonical_consistency_loss_weight: 0.001
+  canonical_consistency_loss_weight: 1
   splatting_loss: True   # This regularizes the rgb field by backprojecting
-  splatting_loss_weight: 0.01
+  splatting_loss_weight: 1
   segmentation_loss: True   # This regularizes the occupancy field by backprojecting
-  segmentation_loss_weight: 0.01
+  segmentation_loss_weight: 1
   depth_loss: True   # This regularizes the occupancy field by backprojecting
   depth_loss_weight: 0.1
   soft_diff_loss: False   # This regularizes the occupancy field depth variability
@@ -74,7 +74,12 @@ loss:
   ray_opacity_loss_weight: 0.01
   eikonal_loss: False
   eikonal_loss_weight: 0.1
-  binary_cross_entropy: True
+  binary_cross_entropy: False
   binary_cross_entropy_weight: 0.001
   occupancy_loss: False   
   occupancy_loss_weight: 0.01
+  t_loss: True
+  t_loss_e: False
+  t_loss_weight: 0.1
+  tv_loss: False
+  tv_loss_weight: 1

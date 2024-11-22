@@ -5,6 +5,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.spatial.transform import Rotation as R
 import trimesh
 import torch.nn.functional as F
+import wandb
 
 # Mesh handling functions
 
@@ -136,6 +137,114 @@ def get_uv(world_coords, intrinsics, pose):
 
     return uv
 
+import torch
+
+def undistort_points(distorted_coords, K, D, max_iterations=10, tolerance=1e-6):
+    """
+    Remove distortion from a set of 2D points without explicit loops.
+    
+    :param distorted_coords: (batch_size, n_points, 2) distorted 2D coordinates (u, v) in pixel space
+    :param K: (batch_size, 3, 3) intrinsic matrices
+    :param D: (batch_size, 5) distortion coefficients [k1, k2, p1, p2, k3]
+    :param max_iterations: Maximum number of iterations for the undistortion process
+    :param tolerance: Convergence tolerance for iterative correction
+    :return: (batch_size, n_points, 2) undistorted 2D coordinates
+    """
+    batch_size, n_points, _ = distorted_coords.shape
+
+    # Extract intrinsic parameters
+    fx = K[:, 0, 0].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+    fy = K[:, 1, 1].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+    cx = K[:, 0, 2].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+    cy = K[:, 1, 2].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+
+    # Normalize the distorted coordinates using the intrinsic parameters
+    x_distorted = (distorted_coords[..., 0:1] - cx) / fx  # (batch_size, n_points, 1)
+    y_distorted = (distorted_coords[..., 1:2] - cy) / fy  # (batch_size, n_points, 1)
+
+    # Initialize the undistorted coordinates as the distorted ones (initial guess)
+    x_undistorted = x_distorted.clone()
+    y_undistorted = y_distorted.clone()
+
+    # Distortion coefficients
+    k1 = D[:, 0].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+    k2 = D[:, 1].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+    p1 = D[:, 2].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+    p2 = D[:, 3].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+    k3 = D[:, 4].unsqueeze(1).unsqueeze(2)  # (batch_size, 1, 1)
+
+    for _ in range(max_iterations):
+        r2 = x_undistorted ** 2 + y_undistorted ** 2  # (batch_size, n_points, 1)
+
+        # Radial distortion
+        radial = 1 + k1 * r2 + k2 * r2 ** 2 + k3 * r2 ** 3
+
+        # Tangential distortion
+        x_tangential = 2 * p1 * x_undistorted * y_undistorted + p2 * (r2 + 2 * x_undistorted ** 2)
+        y_tangential = p1 * (r2 + 2 * y_undistorted ** 2) + 2 * p2 * x_undistorted * y_undistorted
+
+        # Updated undistorted coordinates
+        x_new = (x_distorted - x_tangential) / radial
+        y_new = (y_distorted - y_tangential) / radial
+
+        # Check for convergence using torch's built-in functionality
+        if torch.max(torch.abs(x_new - x_undistorted)) < tolerance and torch.max(torch.abs(y_new - y_undistorted)) < tolerance:
+            break
+
+        x_undistorted = x_new
+        y_undistorted = y_new
+
+    # Convert back to pixel coordinates using intrinsic parameters
+    u_undistorted = x_undistorted * fx + cx  # (batch_size, n_points, 1)
+    v_undistorted = y_undistorted * fy + cy  # (batch_size, n_points, 1)
+
+    return torch.cat([u_undistorted, v_undistorted], dim=-1)  # (batch_size, n_points, 2)
+
+
+def world_to_pixel_batch(world_points, K_batch, RT_batch):
+    """
+    Transforms a batch of 3D world points into 2D image space coordinates using batched camera parameters.
+
+    Args:
+        world_points (torch.Tensor): 3D world points of shape (batch_size, n_points, 3).
+        K_batch (torch.Tensor): Intrinsic matrices of shape (batch_size, 3, 3).
+        RT_batch (torch.Tensor): Extrinsic matrices of shape (batch_size, 4, 4).
+
+    Returns:
+        uv_coords (torch.Tensor): 2D pixel coordinates of shape (batch_size, n_points, 2).
+    """
+    # Ensure all inputs are float32
+    world_points = world_points.float()
+    K_batch = K_batch.float()
+    RT_batch = RT_batch.float()
+    
+    batch_size, n_points, _ = world_points.shape
+    
+    # Convert world points to homogeneous coordinates by adding a '1' at the end
+    ones = torch.ones((batch_size, n_points, 1), device=world_points.device, dtype=world_points.dtype)
+    world_points_hom = torch.cat([world_points, ones], dim=-1)  # Shape: (batch_size, n_points, 4)
+
+    # Apply the RT matrix to transform world coordinates to camera coordinates
+    camera_points_hom = torch.bmm(world_points_hom, RT_batch.transpose(1, 2))  # Shape: (batch_size, n_points, 4)
+    
+    # Extract X_c, Y_c, Z_c from camera coordinates
+    X_c = camera_points_hom[:, :, 0]
+    Y_c = camera_points_hom[:, :, 1]
+    Z_c = camera_points_hom[:, :, 2]
+
+    # Apply the intrinsic matrix K to get image coordinates in homogeneous form
+    camera_points = camera_points_hom[:, :, :3].transpose(1, 2)  # Shape: (batch_size, 3, n_points)
+    pixel_coords_hom = torch.bmm(K_batch, camera_points).transpose(1, 2)  # Shape: (batch_size, n_points, 3)
+
+    # Convert from homogeneous to (u, v) by dividing by the third coordinate (w)
+    u = pixel_coords_hom[:, :, 0] / pixel_coords_hom[:, :, 2]
+    v = pixel_coords_hom[:, :, 1] / pixel_coords_hom[:, :, 2]
+
+    # Stack (u, v) into the final output of shape (batch_size, n_points, 2)
+    uv_coords = torch.stack((u, v), dim=-1)  # Shape: (batch_size, n_points, 2)
+
+    return uv_coords
+
 def project(x, y, z, intrinsics):
     '''Projects 3D points to the image plane.'''
     fx, fy, cx, cy = intrinsics[:, 0, 0], intrinsics[:, 1, 1], intrinsics[:, 0, 2], intrinsics[:, 1, 2]
@@ -219,6 +328,9 @@ def stable_softmax(logits, dim):
     sum_exps = exps.sum(dim=dim, keepdim=True)
     return exps / sum_exps
 
+def print_grad(grad):
+    wandb.log({"grad": grad.mean().item()})
+
 
 # Matrix refinement
 
@@ -271,3 +383,58 @@ class UpSample(nn.Module):
        x1 = self.up(x1)
        x = torch.cat([x1, x2], 1)
        return self.conv(x)
+    
+class PixelShuffle3d(nn.Module):
+    '''
+    This class is a 3d version of pixelshuffle.
+    '''
+    def __init__(self, scale):
+        '''
+        :param scale: upsample scale
+        '''
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, input):
+        batch_size, channels, in_depth, in_height, in_width = input.size()
+        nOut = channels // self.scale ** 3
+
+        out_depth = in_depth * self.scale
+        out_height = in_height * self.scale
+        out_width = in_width * self.scale
+
+        input_view = input.contiguous().view(batch_size, nOut, self.scale, self.scale, self.scale, in_depth, in_height, in_width)
+
+        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+
+        return output.view(batch_size, nOut, out_depth, out_height, out_width)
+
+class PixelUnshuffle3d(nn.Module):
+    '''
+    This class is a 3D version of pixel unshuffle, the inverse operation of PixelShuffle3d.
+    '''
+    def __init__(self, scale):
+        '''
+        :param scale: downsample scale
+        '''
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, input):
+        batch_size, channels, in_depth, in_height, in_width = input.size()
+
+        # Ensure that the depth, height, and width are divisible by the scale factor
+        assert in_depth % self.scale == 0, f"Incompatible depth {in_depth} for scale {self.scale}"
+        assert in_height % self.scale == 0, f"Incompatible height {in_height} for scale {self.scale}"
+        assert in_width % self.scale == 0, f"Incompatible width {in_width} for scale {self.scale}"
+
+        out_depth = in_depth // self.scale
+        out_height = in_height // self.scale
+        out_width = in_width // self.scale
+        nOut = channels * self.scale ** 3
+
+        # Reshape the input to merge the spatial dimensions into the channel dimension
+        input_view = input.view(batch_size, channels, out_depth, self.scale, out_height, self.scale, out_width, self.scale)
+        output = input_view.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+
+        return output.view(batch_size, nOut, out_depth, out_height, out_width)

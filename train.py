@@ -64,6 +64,7 @@ def train():
         print(f'Training Epoch [{epoch+1}/{num_epochs}]', end='\r')
         model.train()
         total_loss = 0
+        phase = 0
 
         for batch_idx, inputs in enumerate(dataloader):
             t0 = time.time()
@@ -74,8 +75,8 @@ def train():
             inputs['batch_idx'] = batch_idx
             inputs['num_samples'] = len(dataloader)
             outputs = model(inputs)
-        
-            loss = loss_c(confs['loss'], outputs)
+
+            loss, phase = loss_c(confs['loss'], outputs, phase=phase)
             total_loss += loss.item()
 
             opt_t0 = time.time()
@@ -111,17 +112,28 @@ def train():
                     wandb.log({"rendered_image": [wandb.Image(rendered_image[0].cpu().detach().numpy().transpose(1, 2, 0))]})
                     wandb.log({"ssim": ssim_value})
 
+        if phase == 2:
+            model.opt['phase_push'] = True
+
         if (epoch+1) % 10 == 0:
             try:
                 outputs_folder = os.path.join('outputs', 'train', inputs['metadata']['subject'][0], 'cano')
                 os.makedirs(outputs_folder, exist_ok=True)
                 mesh = model.generate_mesh(outputs['dynamical_voxels_coo'], outputs['occupancy_field'], outputs['rgb_field'], outputs_folder, epoch, mode='cano')
+                
                 outputs_folder = os.path.join('outputs', 'train', inputs['metadata']['subject'][0], 'ao_cano')
                 os.makedirs(outputs_folder, exist_ok=True)
                 mesh = model.generate_mesh(None, model.activity_occupancy, model.activity_occupancy_rgb, outputs_folder, epoch, mode='ao_cano')
-                #mesh = model.generate_mesh(outputs['dynamical_voxels_coo'], model.activity_occupancy, model.activity_occupancy_rgb, outputs_folder, epoch, mode='dynamical_pc') 
+                
+                outputs_folder = os.path.join('outputs', 'train', inputs['metadata']['subject'][0], 'dynamical_ao')
+                os.makedirs(outputs_folder, exist_ok=True)
+                mesh = model.generate_mesh(None, model.activity_occupancy, model.activity_occupancy_rgb, outputs_folder, epoch, mode='dynamical_ao')
+                
+                outputs_folder = os.path.join('outputs', 'train', inputs['metadata']['subject'][0], 'dynamical')
+                os.makedirs(outputs_folder, exist_ok=True)
+                mesh = model.generate_mesh(outputs['dynamical_voxels_coo'], outputs['occupancy_field_t'], outputs['rgb_field_t'], outputs_folder, epoch, mode='dynamical_pc') 
             except:
-                print("Error in mesh generation") 
+                print('Error generatiing mesh')
         torch.save(model.state_dict(), 'outputs/last.pth')
 
         average_loss = total_loss / len(dataloader)

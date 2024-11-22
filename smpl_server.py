@@ -1,19 +1,118 @@
 import torch
 import numpy as np
-from smpl.body_models import SMPL
 
+class SMPLServer(torch.nn.Module):
+
+    def __init__(self, gender='neutral', betas=None):
+        super().__init__()
+
+        smplx = False
+        if smplx:
+            from smpl.body_models import SMPLX
+            self.smpl = SMPLX(model_path='/home/lbocchi/UnA-Gen/smpl/smplx_model',
+                            gender=gender,
+                            batch_size=1,
+                            dtype=torch.float32).cuda()
+        else:
+            from smpl.body_models import SMPL
+            self.smpl = SMPL(model_path='/home/lbocchi/UnA-Gen/smpl/smpl_model',
+                            gender=gender,
+                            batch_size=1,
+                            use_hands=False,
+                            use_feet_keypoints=False,
+                            dtype=torch.float32).cuda()
+    
+        self.faces = self.smpl.faces
+
+        if betas is not None:
+            self.betas = torch.tensor(betas).float().cuda()
+        else:
+            self.betas = None
+
+        # define the canonical pose
+        smplx=False
+        if smplx:
+            param_canonical = torch.zeros((1, 80),dtype=torch.float32).cuda()
+        else:
+            param_canonical = torch.zeros((1, 86),dtype=torch.float32).cuda()
+        param_canonical[0, 0] = 1
+        param_canonical[0, 9] = np.pi / 6
+        param_canonical[0, 12] = -np.pi / 6
+        if self.betas is not None:
+            param_canonical[0,-10:] = self.betas
+        self.param_canonical = param_canonical
+
+        #output = self.forward(*torch.split(self.param_canonical, [1, 3, 72, 10], dim=1), absolute=True)
+        if smplx:
+            output = self.forward(*torch.split(self.param_canonical, [1, 3, 3, 63, 10], dim=1), absolute=True)
+        else:
+            output = self.forward(*torch.split(self.param_canonical, [1, 3, 3, 69, 10], dim=1), absolute=True)
+        self.verts_c = output['smpl_verts']
+        self.joints_c = output['smpl_jnts']
+        self.tfs_c_inv = output['smpl_tfs'].squeeze(0).inverse()
+
+
+    def forward(self, scale, transl, global_orient, body_pose, betas, absolute=False):
+        """return SMPL output from params
+        Args:
+            scale : scale factor. shape: [B, 1]   
+            transl: translation. shape: [B, 3]   
+            thetas: pose. shape: [B, 72]   
+            betas: shape. shape: [B, 10]   
+            absolute (bool): if true return smpl_tfs wrt thetas=0. else wrt thetas=thetas_canonical. 
+        Returns:
+            smpl_verts: vertices. shape: [B, 6893. 3]
+            smpl_tfs: bone transformations. shape: [B, 24, 4, 4]
+            smpl_jnts: joint positions. shape: [B, 25, 3]
+        """
+
+        output = {}
+
+        smpl_output = self.smpl.forward(betas=betas,
+                                        transl=torch.zeros_like(transl),
+                                        body_pose=body_pose,
+                                        global_orient=global_orient,
+                                        return_verts=True,
+                                        return_full_pose=True)
+
+        verts = smpl_output.vertices.clone()
+        output['smpl_verts'] = verts * scale.unsqueeze(1) + transl.unsqueeze(1) * scale.unsqueeze(1)
+
+        joints = smpl_output.joints.clone()
+        output['smpl_jnts'] = joints * scale.unsqueeze(1) + transl.unsqueeze(1) * scale.unsqueeze(1)
+
+        tf_mats = smpl_output.T.clone()
+        tf_mats[:, :, :3, :] = tf_mats[:, :, :3, :] * scale.unsqueeze(1).unsqueeze(1)
+        tf_mats[:, :, :3, 3] = tf_mats[:, :, :3, 3] + transl.unsqueeze(1) * scale.unsqueeze(1)
+
+        if not absolute:
+            tf_mats = torch.einsum('bnij,njk->bnik', tf_mats, self.tfs_c_inv)
+        
+        output['smpl_tfs'] = tf_mats
+        output['smpl_weights'] = smpl_output.weights
+        return output
+    
+
+'''
 class SMPLServer(torch.nn.Module):
 
     def __init__(self, gender='neutral', betas=None, v_template=None):
         super().__init__()
 
 
-        self.smpl = SMPL(model_path='/home/lbocchi/UnA-Gen/smpl/smpl_model',
-                         gender=gender,
-                         batch_size=1,
-                         use_hands=False,
-                         use_feet_keypoints=False,
-                         dtype=torch.float32).cuda()
+        if True:
+            self.smpl = SMPL(model_path='/home/lbocchi/UnA-Gen/smpl/smplx_model',
+                            gender=gender,
+                            batch_size=1,
+                            dtype=torch.float32).cuda()
+        else:
+            self.smpl = SMPL(model_path='/home/lbocchi/UnA-Gen/smpl/smpl_model',
+                            gender=gender,
+                            batch_size=1,
+                            use_hands=False,
+                            use_feet_keypoints=False,
+                            dtype=torch.float32).cuda()
+    
 
         self.bone_parents = self.smpl.bone_parents.astype(int)
         self.bone_parents[0] = -1
@@ -91,3 +190,4 @@ class SMPLServer(torch.nn.Module):
         output['smpl_tfs'] = tf_mats
         output['smpl_weights'] = smpl_output.weights
         return output
+'''

@@ -28,13 +28,56 @@ class una_gen_dataset(Dataset):
 
         split_dir = os.path.join(data_dir, split)
         for video_folder in os.listdir(split_dir):
+            if video_folder == 'courtyard_laceShoe_00':   # This is a temporary fix, we should remove this line
+                dna_rendering = False
             if video_folder == 'courtyard_backpack_00':   # This is a temporary fix, we should remove this line
+                dna_rendering = False
                 continue
             if video_folder == '0025_11':   # This is a temporary fix, we should remove this line
+                dna_rendering = True
                 continue
+            if video_folder == '0012_09':   # This is a temporary fix, we should remove this line
+                dna_rendering = True
+                camera = 'camera_1'
+                continue
+                
+                '''
+                video_path = os.path.join(split_dir, video_folder)
+                camera_folder = os.path.join(video_path, "camera_1")
+                rgb_frames_folder = os.path.join(camera_folder, "color")
+                mask_frames_folder = os.path.join(camera_folder, "mask")
+                camera_params_path = os.path.join(camera_folder, "camera_params.pkl")
+                camera_normalize_path = os.path.join(camera_folder, "cameras_normalize.npz")
+                smplx_params_path = os.path.join(video_path, "smplx.npy")
+                metadata_path = os.path.join(video_path, "metadata.yaml")
+                with open(metadata_path, 'r') as file:
+                    metadata = yaml.safe_load(file)
+
+                for i, (rgb_frame_file, mask_frame_file) in enumerate(zip(os.listdir(rgb_frames_folder), os.listdir(mask_frames_folder))):
+                    if i % frame_skip == 0:
+                        rgb_frame_path = os.path.join(rgb_frames_folder, rgb_frame_file)
+                        mask_frame_path = os.path.join(mask_frames_folder, mask_frame_file)
+                        self.data.append({'rgb_frame_path': rgb_frame_path, 
+                                          'mask_frame_path': mask_frame_path, 
+                                          'camera_params_path': camera_params_path, 
+                                          'camera_normalize_path': camera_normalize_path,
+                                          'smplx_params_path': smplx_params_path, 
+                                          'metadata': metadata, 
+                                          'frame_id': i})
+                '''
+
             video_path = os.path.join(split_dir, video_folder)
-            frame_dir = os.path.join(video_path, "rgb_frames")
-            mask_dir = os.path.join(video_path, "masks")
+            if dna_rendering:
+                video_path = os.path.join(video_path, camera)
+            if dna_rendering:
+                frame_dir = os.path.join(video_path, "color")
+                mask_dir = os.path.join(video_path, "mask")
+            else:
+                frame_dir = os.path.join(video_path, "rgb_frames")
+                mask_dir = os.path.join(video_path, "masks")
+
+            camera_parameters_original_path = os.path.join(video_path, "camera_params.pkl")
+
             masked_img_dir = os.path.join(video_path, "masked_img")
             depth_img_dir = os.path.join(video_path, "depth_img_bw")   # Change to depth_img if we want to use the 3-channels depth images
             smpl_params_dir = os.path.join(video_path, "smpl_params")
@@ -44,14 +87,20 @@ class una_gen_dataset(Dataset):
             smpl_outputs_dir = os.path.join(video_path, "smpl_outputs")
             smpl_verts_cano_dir = os.path.join(video_path, "smpl_verts_cano")
 
-            betas_path = os.path.join(video_path, "mean_shape.npy")
-            metadata_path = os.path.join(video_path, "metadata.yaml")
+            if dna_rendering:
+                betas_path = None
+                smplx_data_path = os.path.join(split_dir, video_folder, "smplx.npy")
+                metadata_path = os.path.join(split_dir, video_folder, "metadata.yaml")
+            else:
+                betas_path = os.path.join(video_path, "mean_shape.npy")
+                smplx_data_path = None
+                metadata_path = os.path.join(video_path, "metadata.yaml")
 
             with open(metadata_path, 'r') as file:
                 metadata = yaml.safe_load(file)
 
             frame_files = sorted([f for f in os.listdir(frame_dir) if f.endswith((".jpg", ".jpeg", ".png"))])
-            mask_files = sorted([f for f in os.listdir(mask_dir) if f.endswith((".jpg", ".jpeg", ".png"))])
+            mask_files = sorted([f for f in os.listdir(mask_dir) if f.endswith((".jpg", ".jpeg", ".png", ".npz"))])
             masked_images = sorted([f for f in os.listdir(masked_img_dir) if f.endswith((".jpg", ".jpeg", ".png"))])
             depth_images = sorted([f for f in os.listdir(depth_img_dir) if f.endswith((".jpg", ".jpeg", ".png"))])
             smpl_params_files = sorted([f for f in os.listdir(smpl_params_dir) if f.endswith(".pt")])
@@ -87,18 +136,21 @@ class una_gen_dataset(Dataset):
                     smpl_outputs_path = os.path.join(smpl_outputs_dir, smpl_outputs_file)
                     smpl_cano_vers_path = os.path.join(smpl_verts_cano_dir, smpl_verts_cano_file)
                     self.data.append({'frame_path': frame_path, 
-                                      'mask_path': mask_path, 
-                                      'masked_img_path': masked_img_path, 
-                                      'depth_img_path': depth_img_path, 
-                                      'smpl_params_path': smpl_params_path, 
-                                      'pose_path': pose_path, 
-                                      'intrinsics_path': intrinsics_path, 
-                                      'smpl_tfs_path': smpl_tfs_path, 
-                                      'smpl_outputs_path': smpl_outputs_path,
-                                      'smpl_verts_cano_path': smpl_cano_vers_path,
-                                      'betas_path': betas_path, 
-                                      'metadata': metadata,
-                                      'frame_id': i})
+                                    'mask_path': mask_path, 
+                                    'masked_img_path': masked_img_path, 
+                                    'depth_img_path': depth_img_path, 
+                                    'smpl_params_path': smpl_params_path, 
+                                    'pose_path': pose_path, 
+                                    'intrinsics_path': intrinsics_path, 
+                                    'smpl_tfs_path': smpl_tfs_path, 
+                                    'smpl_outputs_path': smpl_outputs_path,
+                                    'smpl_verts_cano_path': smpl_cano_vers_path,
+                                    'betas_path': betas_path, 
+                                    'smplx_data_path': smplx_data_path,
+                                    'metadata': metadata,
+                                    'dna_rendering_dataset': dna_rendering,
+                                    'frame_id': i,
+                                    'camera_parameters_original_path': camera_parameters_original_path})
 
                 ''' The smpl tfs are already preprocessed
                 betas = torch.tensor(np.load(betas_path)[None], dtype=torch.float32)
@@ -117,14 +169,45 @@ class una_gen_dataset(Dataset):
 
     def __getitem__(self, idx):
         frame_info = self.data[idx]
+        
+        '''
+        print("frame_info['rgb_frame_path']:", frame_info['rgb_frame_path'])
+        image = cv2.imread(frame_info['rgb_frame_path'])
+        mask = np.load(frame_info['mask_frame_path'], allow_pickle=True).files[0]
+        print("mask:", mask)
+        camera_params = np.load(frame_info['camera_params_path'], allow_pickle=True)
+        camera_normalize = np.load(frame_info['camera_normalize_path'], allow_pickle=True)
+        smplx_params = np.load(frame_info['smplx_params_path'], allow_pickle=True).item()
+        metadata = frame_info['metadata']
+        frame_id = frame_info['frame_id']
+        print("image shape:", image.shape)
+        print("image range:", image.min(), image.max())
+        print("mask shape:", mask.shape)
+
+        betas = smplx_params['betas']
+        shape = smplx_params['betas']
+
+        trans = smplx_params['transl']
+        print("betas:", betas.shape)
+        print("trans", trans.shape)
+        '''
+
+        smplx = False
+        if smplx:
+            camera_params_original = np.load(frame_info['camera_parameters_original_path'], allow_pickle=True)  
+            D = torch.tensor(camera_params_original['D'])
+            K, RT = torch.tensor(camera_params_original['K']), torch.tensor(camera_params_original['RT'])
+
         # frame = cv2.imread(frame_info['frame_path'])
         ## frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)   # Not sure about this
         # mask = cv2.imread(frame_info['mask_path'], cv2.IMREAD_GRAYSCALE)
-        betas = torch.tensor(np.load(frame_info['betas_path'])[None], dtype=torch.float32) 
+        if frame_info['dna_rendering_dataset']:
+            betas = torch.tensor(np.load(frame_info['smplx_data_path'], allow_pickle=True).item()['betas'], dtype=torch.float32)[0].unsqueeze(0)
+        else:
+            betas = torch.tensor(np.load(frame_info['betas_path'])[None], dtype=torch.float32) 
         metadata = frame_info['metadata']
         
         # masked_image = cv2.bitwise_and(frame, frame, mask=mask)
-        # I think we should not resize
         # masked_image = cv2.resize(masked_image, (1080, 1080))   # When reshaping we have to also change the parameters etc. run in the preprocessing of the original image
         masked_image = cv2.imread(frame_info['masked_img_path'], cv2.IMREAD_COLOR) 
         masked_image = cv2.cvtColor(masked_image, cv2.COLOR_BGR2RGB)
@@ -203,6 +286,9 @@ class una_gen_dataset(Dataset):
                     'depth_image': depth_image,
                     # 'uv': uv,
                     # 'cam_loc': cam_loc,   
+                    #'K': K,
+                    #'RT': RT,
+                    #'D': D,
                     'original_size': original_size,
                     'image_size': image_size,
                     'min_x': min_x,

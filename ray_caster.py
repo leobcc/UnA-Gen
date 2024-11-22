@@ -15,7 +15,7 @@ import time
 # render_values_at_rays(dynamical_voxels_world_coo, occupancy_field, rgb_field, image, depth_image)
 
 class RayCaster:
-    def __init__(self, model, dynamical_voxels_world_coo, occupancy_field, cum_of, rgb_field, image, depth_image=None, device='cuda'):
+    def __init__(self, model, dynamical_voxels_world_coo, voxels_uv, occupancy_field, cum_of, rgb_field, image, depth_image=None, device='cuda'):
         self.opt = model.opt
         self.batch_size = model.batch_size
         self.mapping_dim = model.mapping_dim
@@ -25,14 +25,15 @@ class RayCaster:
         self.img_size = model.img_size
         self.image_size = model.image_size
         self.original_size = model.original_size
-        self.min_x = model.min_x
-        self.max_x = model.max_x
-        self.min_y = model.min_y
-        self.max_y = model.max_y
+        self.voxels_uv = voxels_uv
+        #self.min_x = model.min_x
+        #self.max_x = model.max_x
+        #self.min_y = model.min_y
+        #self.max_y = model.max_y
         self.cam_loc = model.cam_loc
-        self.scale = model.scale   # Some of this parameters can be removed when removing visualization
-        self.trans = model.trans
-        self.standard_depth_n = model.standard_depth_n
+        #self.scale = model.scale   # Some of this parameters can be removed when removing visualization
+        #self.trans = model.trans
+        #self.standard_depth_n = model.standard_depth_n
         self.visualize_stats = model.visualize_stats
         self.visualize_voxels = model.visualize_voxels
 
@@ -52,10 +53,11 @@ class RayCaster:
             self.mode = mode
             assert self.depth_image != None, "Depth image is required for training mode"
             dynamical_voxels_world_coo = self.dynamical_voxels_world_coo  
-
-            voxels_uv = get_uv(dynamical_voxels_world_coo, self.intrinsics, self.pose)
-            voxels_uv[..., 0] = (voxels_uv[..., 0] - self.min_x) / (self.max_x - self.min_x) * self.image_size[1]
-            voxels_uv[..., 1] = (voxels_uv[..., 1] - self.min_y) / (self.max_y - self.min_y) * self.image_size[0]
+            
+            voxels_uv = self.voxels_uv
+            #voxels_uv = get_uv(dynamical_voxels_world_coo, self.intrinsics, self.pose)
+            #voxels_uv[..., 0] = (voxels_uv[..., 0] - self.min_x) / (self.max_x - self.min_x) * self.image_size[1]
+            #voxels_uv[..., 1] = (voxels_uv[..., 1] - self.min_y) / (self.max_y - self.min_y) * self.image_size[0]
             mask_out_of_range_x = (voxels_uv[..., 0] < 0) | (voxels_uv[..., 0] >= self.image_size[1].item())
             mask_out_of_range_y = (voxels_uv[..., 1] < 0) | (voxels_uv[..., 1] >= self.image_size[0].item())
             self.occupancy_field[mask_out_of_range_x | mask_out_of_range_y] = 0
