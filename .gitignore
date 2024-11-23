@@ -1,7 +1,7 @@
 data/*
 smpl/**/*.pkl
 smpl/**/*.npz
-supp_repos/*
+supp_repos/Depth_Anything_main/*
 outputs/*
 __pycache__/*
 wandb/*
