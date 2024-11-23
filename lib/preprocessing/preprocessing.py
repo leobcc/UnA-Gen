@@ -9,7 +9,7 @@ import glob
 import argparse
 from preprocessing_utils import (smpl_to_pose, PerspectiveCamera, Renderer, render_trimesh, \
                                 estimate_translation_cv2, transform_smpl)
-from loss_pre import joints_2d_loss, pose_temporal_loss, get_loss_weights
+from lib.loss_pre import joints_2d_loss, pose_temporal_loss, get_loss_weights
 
 def main(args):
     device = torch.device("cuda:0")

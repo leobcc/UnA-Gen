@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import transforms
 from torch.utils.data import DataLoader
-from dataset import una_gen_dataset
-from loss import loss_c
+from lib.dataset import una_gen_dataset
+from lib.loss import loss_c
 from model import UnaGenModel
 from utils import *  
 import yaml
