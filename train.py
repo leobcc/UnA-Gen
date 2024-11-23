@@ -34,9 +34,6 @@ def train():
     num_epochs = confs['num_epochs']
     continue_training = confs['continue_training']
 
-    transform = transforms.Compose([
-                        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-
     dataset = una_gen_dataset(data_dir="/home/lbocchi/UnA-Gen/data/data", split='train', frame_skip=confs['frame_skip'], image_size=(confs['image_dim'], confs['image_dim']), transform=None)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=confs['shuffle'], num_workers=confs['num_workers'])
 
@@ -81,8 +78,6 @@ def train():
 
             opt_t0 = time.time()
             loss.backward()
-            #print("Gradient of scale:", model.scale.grad)
-            #print("Gradient of standard depth n:", model.standard_depth_n.grad)
             optimizer.step()
             optimizer.zero_grad()
             opt_t1 = time.time()
