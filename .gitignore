@@ -15,3 +15,5 @@ outputs/eval/*
 !outputs/eval/.gitkeep
 
 wandb/*
+
+model_stable_(05-08).py
