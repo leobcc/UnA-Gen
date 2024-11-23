@@ -1,7 +1,10 @@
 data/*
+
 smpl/**/*.pkl
 smpl/**/*.npz
+
 supp_repos/Depth_Anything_main/*
+
 outputs/checkpoints/*
 outputs/train/*
 outputs/eval/*
@@ -9,5 +12,6 @@ outputs/eval/*
 !outputs/checkpoints/.gitkeep
 !outputs/train/.gitkeep
 !outputs/eval/.gitkeep
-__pycache__/*
+
+#__pycache__/*
 wandb/*
