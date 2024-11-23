@@ -3,5 +3,8 @@ smpl/**/*.pkl
 smpl/**/*.npz
 supp_repos/Depth_Anything_main/*
 outputs/*
+!outputs/README.md
+!outputs/train/.gitkeep
+!outputs/eval/.gitkeep
 __pycache__/*
 wandb/*
