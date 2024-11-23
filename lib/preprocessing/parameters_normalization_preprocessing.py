@@ -5,6 +5,7 @@ import os
 from preprocessing_utils import (smpl_to_pose, PerspectiveCamera, Renderer, render_trimesh, \
                                 estimate_translation_cv2, transform_smpl)
 
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 path = '/home/lbocchi/UnA-Gen/data/data/train/courtyard_laceShoe_00/cameras.npz'
 

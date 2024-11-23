@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from PIL import Image
 import numpy as np
 import cv2
-from smpl_server import SMPLServer
+from lib.smpl_server import SMPLServer
 from torchvision.utils import save_image
 from lib.utils.utils import get_camera_params
 

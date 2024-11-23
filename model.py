@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import DoubleConv, DownSample, UpSample, PixelShuffle3d, PixelUnshuffle3d
+from lib.utils import DoubleConv, DownSample, UpSample, PixelShuffle3d, PixelUnshuffle3d
 from lib.deformer import SMPLDeformer, skinning
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -10,8 +10,8 @@ import os
 from torchvision.utils import make_grid, save_image
 from torchvision import transforms, models
 import time
-from utils import get_camera_loc, coordinates_projection_map, get_cam, get_rays, get_uv, upsample_matrix, quat_to_rot, axis_angle_to_rotation_matrix, get_global_transformation
-from utils import stable_softmax, print_grad, world_to_pixel_batch, undistort_points
+from lib.utils import get_camera_loc, coordinates_projection_map, get_cam, get_rays, get_uv, upsample_matrix, quat_to_rot, axis_angle_to_rotation_matrix, get_global_transformation
+from lib.utils import stable_softmax, print_grad, world_to_pixel_batch, undistort_points
 from collections import OrderedDict
 import wandb
 #import segmentation_models_pytorch as smp

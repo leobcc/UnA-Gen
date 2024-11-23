@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import yaml
 from lib.utils import utils  
-from smpl_server import SMPLServer
+from lib.smpl_server import SMPLServer
 from lib.deformer import SMPLDeformer
 import subprocess
 import matplotlib.pyplot as plt

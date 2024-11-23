@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from smpl_server import SMPLServer
+from lib.smpl_server import SMPLServer
 from pytorch3d import ops
 
 class SMPLDeformer():

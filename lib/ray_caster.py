@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import os
 import cv2
 import torch.nn.functional as F
-from utils import get_rays, get_uv
+from lib.utils import get_rays, get_uv
 import wandb
 from torchvision.utils import make_grid
 import time
