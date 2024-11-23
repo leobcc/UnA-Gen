@@ -1,5 +1,6 @@
 data/*
-smpl/*
+smpl/**/*.pkl
+smpl/**/*.npz
 supp_repos/*
 outputs/*
 __pycache__/*
